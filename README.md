@@ -50,6 +50,8 @@ esp_sdr_run_result_t result;
 esp_sdr_run(&run, &sink, &result);
 ```
 
+C++ users can include `esp_sdr.hpp` (`esp_sdr::Radio`, same calls, no exceptions or heap).
+
 Add `components/esp_sdr` and `components/esp-dsp` to `EXTRA_COMPONENT_DIRS` and
 copy the essential settings from `firmware/sdkconfig.defaults` (single-core
 FreeRTOS, interrupt watchdog off, 240 MHz).
