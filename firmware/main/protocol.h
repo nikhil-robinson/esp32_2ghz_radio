@@ -15,6 +15,7 @@ typedef enum {
     REQ_SET_MODE = 0x04,
     REQ_SET_FREQUENCY = 0x10,
     REQ_SET_PLL_OFFSET = 0x11,
+    REQ_SET_CRYSTAL_PPB = 0x1B,
     REQ_SET_GAIN = 0x12,
     REQ_GET_GAIN = 0x13,
     REQ_SET_FILTER = 0x14,
@@ -135,6 +136,12 @@ typedef struct __attribute__((packed)) {
 } msg_set_pll_offset_t;
 _Static_assert(sizeof(msg_set_pll_offset_t) == 4, "SET_PLL_OFFSET layout");
 
+/** Board crystal error to cancel in RX and TX tuning, ppb (+ = runs fast); applies from the next tune. */
+typedef struct __attribute__((packed)) {
+    int32_t ppb;
+} msg_set_crystal_ppb_t;
+_Static_assert(sizeof(msg_set_crystal_ppb_t) == 4, "SET_CRYSTAL_PPB layout");
+
 /** manual=0: hardware AGC; manual=1: fixed PHY gain index. */
 typedef struct __attribute__((packed)) {
     uint8_t manual;
@@ -233,7 +240,7 @@ typedef struct __attribute__((packed)) {
 } msg_scan_t;
 _Static_assert(sizeof(msg_scan_t) == 16, "SCAN layout");
 
-/** Transmit region: 0 ISM 2400-2483.5, 1 HAM 2300-2450, 2 UNRESTRICTED 2210-2790 MHz. */
+/** Transmit region: 0 ISM 2400-2483.5, 1 HAM 2300-2450, 2 UNRESTRICTED 2210-2780 MHz. */
 typedef struct __attribute__((packed)) {
     uint8_t region;
 } msg_tx_region_t;

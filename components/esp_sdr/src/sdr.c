@@ -98,6 +98,8 @@ esp_err_t esp_sdr_set_frequency(uint32_t mhz)
 }
 
 uint32_t esp_sdr_get_frequency(void) { return rf_frequency(); }
+void esp_sdr_set_crystal_ppb(int32_t ppb) { rf_set_crystal_ppb(ppb); }
+int32_t esp_sdr_get_crystal_ppb(void) { return rf_crystal_ppb(); }
 void esp_sdr_set_pll_offset(int32_t khz)
 {
     if (sdr_mode() == ESP_SDR_MODE_RX) {

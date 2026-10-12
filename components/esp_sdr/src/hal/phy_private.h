@@ -33,6 +33,10 @@ extern void start_tx_tone_step(uint32_t on, int32_t a, int32_t atten, uint32_t b
 #define PHY_TONE1_REG 0x60006040u
 #define PHY_TONE_FIELD_MASK 0x3FFu
 #define PHY_TONE_ON (1u << 18)
+/* Tone generator fine frequency: bits 0..1 add 40 MHz / 1024 per step on top
+ * of the coarse field (measured 2026-10-13; no enable bit needed). */
+#define PHY_TONE1_FINE_REG 0x60006050u
+#define PHY_TONE_FINE_MASK 0x3u
 /* libphy.a: PHY parameter block. +288 bit 0x200 marks the RX DC tables valid. */
 extern uint8_t phy_param[];
 #define PHY_PARAM_RX_DC_FLAGS_OFFSET 288u

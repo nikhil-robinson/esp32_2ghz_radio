@@ -7,7 +7,8 @@
  * between packets. Every call returns with the carrier off, except
  * esp_sdr_tx_tone().
  *
- * Deviation is in whole steps of ESP_SDR_TX_STEP_HZ.
+ * Deviation is in steps of 40 MHz / 1024 = 39.0625 kHz, except Gaussian
+ * shaping at 2 Mbps, which uses whole 156.25 kHz steps (CPU time per step).
  */
 #pragma once
 
@@ -20,15 +21,15 @@
 extern "C" {
 #endif
 
-/** Tone generator frequency step (40 MHz / 256). */
-#define ESP_SDR_TX_STEP_HZ 156250u
+/** Tone generator frequency step: 40 MHz / 1024 = 39.0625 kHz, in mHz. */
+#define ESP_SDR_TX_STEP_MILLIHZ 39062500u
 #define ESP_SDR_TX_MAX_BITS 2048u
 #define ESP_SDR_TX_MAX_COUNT 65535u
 
 typedef enum {
     ESP_SDR_REGION_ISM = 0,          /**< 2400.0-2483.5 MHz, licence-free (default) */
     ESP_SDR_REGION_HAM = 1,          /**< 2300-2450 MHz, licensed radio amateurs only */
-    ESP_SDR_REGION_UNRESTRICTED = 2, /**< 2210-2790 MHz, shielded / lab use only */
+    ESP_SDR_REGION_UNRESTRICTED = 2, /**< 2210-2780 MHz, shielded / lab use only */
 } esp_sdr_region_t;
 
 /** Choose where the transmitter may operate. Anything but ISM logs a warning. */
@@ -45,7 +46,7 @@ esp_err_t esp_sdr_tx_off(void);
 typedef struct {
     uint32_t center_khz;
     uint32_t bitrate;       /**< 250000, 1000000 or 2000000 */
-    uint32_t deviation_hz;  /**< rounded to whole ESP_SDR_TX_STEP_HZ steps, at least one */
+    uint32_t deviation_hz;  /**< rounded to 39.0625 kHz steps, at least one */
     bool gaussian;          /**< BT 0.5 shaping */
     uint8_t atten;
 } esp_sdr_fsk_t;

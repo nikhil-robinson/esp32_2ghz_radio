@@ -97,6 +97,15 @@ uint32_t esp_sdr_rate_hz(esp_sdr_rate_t rate);
 
 esp_err_t esp_sdr_set_frequency(uint32_t mhz);
 uint32_t esp_sdr_get_frequency(void);
+/**
+ * Crystal calibration for both receive and transmit tuning: the board's
+ * measured frequency error in parts per billion (+ = everything comes out
+ * high). Applied from the next tune; esp_sdr_set_frequency() retunes now.
+ * Transmitting heats the crystal by up to ~5 ppm/min (measured), so
+ * calibrate in the duty cycle you will use.
+ */
+void esp_sdr_set_crystal_ppb(int32_t ppb);
+int32_t esp_sdr_get_crystal_ppb(void);
 /** Fine LO offset in kHz; retunes immediately. */
 void esp_sdr_set_pll_offset(int32_t khz);
 esp_err_t esp_sdr_set_gain(bool manual, uint8_t index);

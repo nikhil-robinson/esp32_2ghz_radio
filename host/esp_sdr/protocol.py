@@ -77,6 +77,8 @@ REQUESTS = (
        ('mode', 'uint8_t')),
     _m('SET_FREQUENCY', 0x10, 'Tune the receive LO.', ('mhz', 'uint16_t'), ('reserved', 'uint16_t')),
     _m('SET_PLL_OFFSET', 0x11, 'Fine LO offset applied from the next tune.', ('khz', 'int32_t')),
+    _m('SET_CRYSTAL_PPB', 0x1B, 'Board crystal error to cancel in RX and TX tuning, ppb (+ = runs fast); '
+       'applies from the next tune.', ('ppb', 'int32_t')),
     _m('SET_GAIN', 0x12, 'manual=0: hardware AGC; manual=1: fixed PHY gain index.',
        ('manual', 'uint8_t'), ('index', 'uint8_t')),
     _m('GET_GAIN', 0x13, 'Answered with GAIN.'),
@@ -108,7 +110,7 @@ REQUESTS = (
        ('nfft', 'uint16_t'), ('gain', 'uint8_t'), ('detector', 'uint8_t'), ('sweeps', 'uint16_t'),
        ('dwell', 'uint8_t'), ('flags', 'uint8_t'), ('reserved', 'uint16_t')),
     _m('STOP', 0x2F, 'Ends a running stream or scan (any byte also does).'),
-    _m('TX_REGION', 0x40, 'Transmit region: 0 ISM 2400-2483.5, 1 HAM 2300-2450, 2 UNRESTRICTED 2210-2790 MHz.',
+    _m('TX_REGION', 0x40, 'Transmit region: 0 ISM 2400-2483.5, 1 HAM 2300-2450, 2 UNRESTRICTED 2210-2780 MHz.',
        ('region', 'uint8_t')),
     _m('TX_TONE', 0x41, 'Carrier on at khz until TX_OFF. atten 0 = full power.',
        ('khz', 'uint32_t'), ('atten', 'uint8_t')),

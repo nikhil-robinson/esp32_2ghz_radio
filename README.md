@@ -70,7 +70,7 @@ esp_sdr_tx_nrf24(&nrf, payload, 8, 1, 0);
 ```
 
 The default region is the 2.4 GHz ISM band; `esp_sdr_tx_set_region()` opts in to
-HAM (2300–2450 MHz, licensed amateurs) or UNRESTRICTED (2210–2790 MHz, shielded
+HAM (2300–2450 MHz, licensed amateurs) or UNRESTRICTED (2210–2780 MHz, shielded
 lab use) with a logged warning. The serial firmware switches mode with `SET_MODE`
 (the board restarts; `Device.set_mode()` reconnects).
 

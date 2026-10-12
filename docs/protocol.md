@@ -42,6 +42,7 @@ Run status: run_ok = 0, run_fail_arg = 1, run_fail_late = 2, run_fail_age = 3, r
 | `SET_MODE` | `0x04` | `mode` uint8 | ACK, then restart in receive (0) or transmit (1) mode; the host reconnects. |
 | `SET_FREQUENCY` | `0x10` | `mhz` uint16 | Tune the receive LO. |
 | `SET_PLL_OFFSET` | `0x11` | `khz` int32 | Fine LO offset applied from the next tune. |
+| `SET_CRYSTAL_PPB` | `0x1B` | `ppb` int32 | Board crystal error to cancel in RX and TX tuning, ppb (+ = runs fast); applies from the next tune. |
 | `SET_GAIN` | `0x12` | `manual` uint8, `index` uint8 | manual=0: hardware AGC; manual=1: fixed PHY gain index. |
 | `GET_GAIN` | `0x13` | - | Answered with GAIN. |
 | `SET_FILTER` | `0x14` | `code` int8 | Baseband filter code 0..63, or -1 for PHY automatic. |
@@ -58,7 +59,7 @@ Run status: run_ok = 0, run_fail_arg = 1, run_fail_late = 2, run_fail_age = 3, r
 | `IQ_STREAM` | `0x24` | `rate` uint8, `bits` uint8, `decimation` uint16, `shift` uint8, `rotate` uint8, `duration_ms` uint32 | Decimated IQ stream from 16 Msps input (rate 2 only), decimation 32..1024; IQ_FRAME then RUN_DONE. shift 255 = automatic. |
 | `SCAN` | `0x25` | `from_mhz` uint16, `to_mhz` uint16, `rate` uint8, `averages` uint8, `nfft` uint16, `gain` uint8, `detector` uint8, `sweeps` uint16, `dwell` uint8, `flags` uint8 | Full-band scan; SCAN_SEGMENT frames then RUN_DONE. sweeps 0 = until STOP; gain 255 = AGC; detector 0 mean / 1 peak; flags bit0 flatten, bit1 suppress clock spurs. |
 | `STOP` | `0x2F` | - | Ends a running stream or scan (any byte also does). |
-| `TX_REGION` | `0x40` | `region` uint8 | Transmit region: 0 ISM 2400-2483.5, 1 HAM 2300-2450, 2 UNRESTRICTED 2210-2790 MHz. |
+| `TX_REGION` | `0x40` | `region` uint8 | Transmit region: 0 ISM 2400-2483.5, 1 HAM 2300-2450, 2 UNRESTRICTED 2210-2780 MHz. |
 | `TX_TONE` | `0x41` | `khz` uint32, `atten` uint8 | Carrier on at khz until TX_OFF. atten 0 = full power. |
 | `TX_OFF` | `0x42` | - | Carrier off. |
 | `TX_BITS` | `0x43` | `center_khz` uint32, `bitrate` uint32, `deviation_hz` uint32, `gap_us` uint32, `count` uint16, `nbits` uint16, `gaussian` uint8, `atten` uint8 | Send nbits packed bits (first = bit 7 of byte 0, 1 = +deviation) count times; followed by the bits. ACK when done (ERR_TIMEOUT: CPU fell behind the bit clock). |

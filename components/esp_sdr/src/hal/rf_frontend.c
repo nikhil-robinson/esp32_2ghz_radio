@@ -19,6 +19,14 @@
 
 static uint32_t frequency_mhz = DEFAULT_MHZ;
 static int32_t pll_offset_khz;
+static int32_t crystal_ppb;  /* measured crystal error: + means the board runs fast */
+
+/* kHz that cancel the crystal error at a PLL frequency (1 kHz resolution). */
+static int32_t crystal_correction_khz(uint32_t pll_mhz)
+{
+    int64_t khz = -(int64_t)pll_mhz * crystal_ppb / 1000000;
+    return (int32_t)khz;
+}
 static uint32_t calibrated_mhz;
 static bool rx_ready;
 
@@ -55,11 +63,12 @@ static void tune(uint32_t mhz)
     }
     lo_plan_t plan = lo_plan(mhz);
     /* A PLL offset requires the direct path even on channel frequencies. */
-    bool use_channel_table = !pll_offset_khz && lo_is_wifi_channel(mhz);
+    int32_t correction_khz = crystal_correction_khz(plan.pll_mhz);
+    bool use_channel_table = !pll_offset_khz && !correction_khz && lo_is_wifi_channel(mhz);
     select_lo_divider(false);
     set_chanfreq(use_channel_table ? mhz : DEFAULT_MHZ, 0);
     if (!use_channel_table) {
-        set_rf_freq_offset(0, plan.pll_mhz, plan.offset_khz + pll_offset_khz);
+        set_rf_freq_offset(0, plan.pll_mhz, plan.offset_khz + pll_offset_khz + correction_khz);
     }
 }
 
@@ -100,7 +109,7 @@ void rf_tune_tx(uint32_t mhz, uint32_t khz)
 {
     select_lo_divider(false);
     set_chanfreq(DEFAULT_MHZ, 0);
-    set_rf_freq_offset(0, mhz, (int32_t)khz);
+    set_rf_freq_offset(0, mhz, (int32_t)khz + crystal_correction_khz(mhz));
     rx_ready = false;
 }
 
@@ -119,6 +128,14 @@ void rf_set_pll_offset(int32_t khz)
     rx_ready = false;
     rf_prepare_rx();
 }
+
+void rf_set_crystal_ppb(int32_t ppb)
+{
+    crystal_ppb = ppb;
+    rx_ready = false;
+}
+
+int32_t rf_crystal_ppb(void) { return crystal_ppb; }
 
 void rf_set_gain(bool manual, uint8_t index)
 {

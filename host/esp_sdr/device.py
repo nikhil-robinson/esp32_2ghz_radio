@@ -178,6 +178,10 @@ class Device:
     def set_frequency(self, mhz: int):
         self.request('SET_FREQUENCY', mhz=mhz)
 
+    def set_crystal_ppb(self, ppb: int):
+        """Cancel this board's measured crystal error (+ = runs fast) in RX and TX tuning."""
+        self.request('SET_CRYSTAL_PPB', ppb=ppb)
+
     def set_gain(self, index: int | None):
         """None = hardware AGC."""
         self.request('SET_GAIN', manual=int(index is not None), index=index or 0)
@@ -207,7 +211,7 @@ class Device:
                     raise
 
     def tx_region(self, region: int):
-        """0 ISM (default), 1 HAM 2300-2450, 2 UNRESTRICTED 2210-2790 MHz."""
+        """0 ISM (default), 1 HAM 2300-2450, 2 UNRESTRICTED 2210-2780 MHz."""
         self.request('TX_REGION', region=region)
 
     def tx_tone(self, khz: int, atten: int = 0):

@@ -227,11 +227,13 @@ static void test_tx_plan(void)
     CHECK(!tx_region_allows(ESP_SDR_REGION_ISM, 2399844, 2400156));  /* deviation crosses the edge */
     CHECK(tx_region_allows(ESP_SDR_REGION_ISM, 2483000, 2483500) && !tx_region_allows(ESP_SDR_REGION_ISM, 2483000, 2483501));
     CHECK(tx_region_allows(ESP_SDR_REGION_HAM, 2300000, 2300400) && !tx_region_allows(ESP_SDR_REGION_HAM, 2460000, 2460400));
-    CHECK(tx_region_allows(ESP_SDR_REGION_UNRESTRICTED, 2210000, 2790000));
+    CHECK(tx_region_allows(ESP_SDR_REGION_UNRESTRICTED, 2210000, 2780000));
+    CHECK(!tx_region_allows(ESP_SDR_REGION_UNRESTRICTED, 2780000, 2790000));
     CHECK(!tx_region_allows(ESP_SDR_REGION_UNRESTRICTED, 2100000, 2100400));
     CHECK(!tx_region_allows((esp_sdr_region_t)3, 2440000, 2440000));
-    CHECK(tx_deviation_steps(0) == 1 && tx_deviation_steps(160000) == 1 && tx_deviation_steps(250000) == 2);
-    CHECK(tx_deviation_steps(320000) == 2 && tx_deviation_steps(500000) == 3);
+    CHECK(tx_deviation_steps(0) == 1 && tx_deviation_steps(160000) == 4 && tx_deviation_steps(250000) == 6);
+    CHECK(tx_deviation_steps(320000) == 8 && tx_deviation_steps(156250) == 4 && tx_deviation_steps(19531) == 1);
+    CHECK(tx_steps_khz(6) == 235 && tx_steps_khz(4) == 157 && tx_steps_khz(8) == 313);
     CHECK(tx_bitrate_supported(1000000) && !tx_bitrate_supported(500000));
     CHECK(tx_substeps(2000000, true) == 4 && tx_substeps(1000000, true) == 4 && tx_substeps(250000, false) == 1);
 }

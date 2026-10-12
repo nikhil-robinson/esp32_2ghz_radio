@@ -7,7 +7,7 @@
 
 /* The 6/5 LO divider is receive-only, so TX starts where the direct PLL path does. */
 #define TX_MIN_KHZ 2210000u
-#define TX_MAX_KHZ 2790000u
+#define TX_MAX_KHZ 2780000u  /* 2790 locked only sometimes (measured) */
 
 /* True if the whole occupied band lo_khz..hi_khz lies inside the region. */
 static inline bool tx_region_allows(esp_sdr_region_t region, uint32_t lo_khz, uint32_t hi_khz)
@@ -23,11 +23,18 @@ static inline bool tx_region_allows(esp_sdr_region_t region, uint32_t lo_khz, ui
     return lo_khz >= limits[region][0] && hi_khz <= limits[region][1];
 }
 
-/* Deviation in tone-field steps: nearest whole step, at least one. */
+/* Deviation in 39.0625 kHz tone steps: nearest step, at least one. */
 static inline int tx_deviation_steps(uint32_t deviation_hz)
 {
-    uint32_t steps = (deviation_hz + ESP_SDR_TX_STEP_HZ / 2u) / ESP_SDR_TX_STEP_HZ;
+    uint64_t mhz = (uint64_t)deviation_hz * 1000u;
+    uint32_t steps = (uint32_t)((mhz + ESP_SDR_TX_STEP_MILLIHZ / 2u) / ESP_SDR_TX_STEP_MILLIHZ);
     return steps ? (int)steps : 1;
+}
+
+/* Deviation of `steps` in kHz, rounded up (for the region check). */
+static inline uint32_t tx_steps_khz(int steps)
+{
+    return (uint32_t)(((uint64_t)steps * ESP_SDR_TX_STEP_MILLIHZ + 999999u) / 1000000u);
 }
 
 static inline bool tx_bitrate_supported(uint32_t bitrate)

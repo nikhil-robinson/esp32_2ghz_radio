@@ -452,6 +452,11 @@ void requests_handle(const link_request_t *request)
         NEEDS(msg_set_frequency_t);
         ack(to, error_of(esp_sdr_set_frequency(PAYLOAD(msg_set_frequency_t)->mhz)));
         return;
+    case REQ_SET_CRYSTAL_PPB:
+        NEEDS(msg_set_crystal_ppb_t);
+        esp_sdr_set_crystal_ppb(PAYLOAD(msg_set_crystal_ppb_t)->ppb);
+        ack(to, WIRE_ERR_NONE);
+        return;
     case REQ_SET_PLL_OFFSET:
         NEEDS(msg_set_pll_offset_t);
         esp_sdr_set_pll_offset(PAYLOAD(msg_set_pll_offset_t)->khz);

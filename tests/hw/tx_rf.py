@@ -24,10 +24,18 @@ import demod  # noqa: E402
 from esp_sdr import Device  # noqa: E402
 
 FS = 16e6
-IF_HZ = 2e6            # receiver LO sits 2 MHz below the carrier
+# Receiver LO 3 MHz below the carrier. Not 2: LOs that are multiples of 8 MHz
+# (2400, 2424) sit on the receiver's own clock harmonics and cost BLE ch37/38
+# 10-20 % of packets (measured).
+IF_MHZ = 3
+IF_HZ = IF_MHZ * 1e6
 TONE_TOL_PPM = 50      # BLE and nRF24 receivers accept +-50 ppm
 DEV_TOL = 0.10
 MIN_RATE = 0.9         # decoded packets / packets that fit completely inside the captures
+# demod.py is a plain discriminator with one slicer: weaker than a real GFSK
+# receiver on isolated bits (Gaussian ISI at modulation index 0.32), so shaped
+# packets are held to a lower bar. A real nRF24 is the judge for GFSK.
+MIN_RATE_GFSK = 0.8
 CAPTURE_S = 16380 / 16e6
 BURST_S = 7.0          # each TX burst outlasts the captures (~5 s over USB)
 CAPTURES = 40
@@ -51,14 +59,14 @@ def peak_offset_hz(iq: np.ndarray) -> float:
     return np.fft.fftfreq(len(iq), 1 / FS)[np.argmax(spectrum)] - IF_HZ
 
 
-def receive_while(tx, rx, seq: int, decode, packet_s: float, period_s: float, label: str):
+def receive_while(tx, rx, seq: int, decode, packet_s: float, period_s: float, label: str, bar: float = MIN_RATE):
     """Capture while a TX request runs; decoded packets must reach MIN_RATE of
     those that fit completely in the capture windows."""
     time.sleep(0.2)
     packets = sum(len(decode(capture(rx))) for _ in range(CAPTURES))
     tx.wait_tx(seq, 5 + 2 * BURST_S)
     expected = CAPTURES * (CAPTURE_S - packet_s) / period_s
-    result(packets >= MIN_RATE * expected, f'{label}: {packets} packets decoded, {expected:.0f} fit')
+    result(packets >= bar * expected, f'{label}: {packets} packets decoded, {expected:.0f} fit (bar {bar:.0%})')
 
 
 def main(tx_port: str, rx_port: str):
@@ -68,14 +76,14 @@ def main(tx_port: str, rx_port: str):
     rx.set_gain(RX_GAIN)
 
     for khz in (2402000, 2440500, 2480000):
-        rx.set_frequency(khz // 1000 - 2)
+        rx.set_frequency(khz // 1000 - IF_MHZ)
         tx.tx_tone(khz)
         err = (peak_offset_hz(capture(rx)) - (khz % 1000) * 1e3) / 1e3
         tx.tx_off()
         result(abs(err) < TONE_TOL_PPM * khz / 1e6, f'carrier {khz} kHz: error {err:+.1f} kHz ({err / khz * 1e6:+.1f} ppm)')
 
-    rx.set_frequency(2438)
-    for dev in (156250, 312500, 468750):
+    rx.set_frequency(2440 - IF_MHZ)
+    for dev in (117188, 156250, 234375, 312500):  # 3, 4, 6, 8 fine steps
         seen = {}
         for bit in (1, 0):
             seq = tx.tx_bits([bit] * 256, 2440000, 250000, dev, count=1000, wait=False)
@@ -89,7 +97,7 @@ def main(tx_port: str, rx_port: str):
     addr = bytes([0xE7, 0xD3, 0xF0, 0x35, 0x77])
     payload = bytes(range(0xA0, 0xA8))
     channel = 40
-    rx.set_frequency(2400 + channel - 2)
+    rx.set_frequency(2400 + channel - IF_MHZ)
     for bitrate, gap_us in ((250_000, 100), (1_000_000, 200), (2_000_000, 200)):
         for crc_len in (0, 1, 2):
             for gaussian in (False, True):
@@ -106,12 +114,13 @@ def main(tx_port: str, rx_port: str):
                 good = lambda iq: [p for p in demod.nrf24_decode(demod.demod_bits(iq, FS, bitrate, IF_HZ), addr,  # noqa
                                                                  len(payload), crc_len, payload) if p['payload'] == payload]
                 receive_while(tx, rx, seq, good, len(bits) / bitrate, period,
-                              f"nrf24 {bitrate // 1000} kbps crc{crc_len} {'gfsk' if gaussian else 'fsk '}")
+                              f"nrf24 {bitrate // 1000} kbps crc{crc_len} {'gfsk' if gaussian else 'fsk '}",
+                              MIN_RATE_GFSK if gaussian else MIN_RATE)
 
     adv = bytes([0x11, 0x22, 0x33, 0x44, 0x55, 0xC6])
     data = bytes([2, 1, 6, 7, 9]) + b'ESPSDR'
     for channel, mhz in ((37, 2402), (38, 2426), (39, 2480)):
-        rx.set_frequency(mhz - 2)
+        rx.set_frequency(mhz - IF_MHZ)
         seq = tx.tx_ble(channel, adv, data, count=int(BURST_S / 420e-6), gap_us=200, wait=False)
         good = lambda iq: [p for p in demod.ble_decode(demod.demod_bits(iq, FS, 1e6, IF_HZ), channel)  # noqa
                            if p['adv_addr'] == adv and p['data'] == data]
