@@ -1,0 +1,170 @@
+{
+ "gain": "GAIN HARDWARE -1 0 82 0",
+ "capture_16380": {
+  "16000000": {
+   "elapsed_us": 1027,
+   "rms": 23.624081456108378
+  },
+  "40000000": {
+   "elapsed_us": 411,
+   "rms": 21.111350960926284
+  },
+  "80000000": {
+   "elapsed_us": 207,
+   "rms": 21.917041770034356
+  }
+ },
+ "ring_2s": {
+  "16000000": {
+   "status": 0,
+   "pairs": 32006875,
+   "late_max": 7,
+   "elapsed_us": 2000434
+  },
+  "40000000": {
+   "status": 0,
+   "pairs": 80008893,
+   "late_max": 18,
+   "elapsed_us": 2000225
+  },
+  "80000000": {
+   "status": 0,
+   "pairs": 160007427,
+   "late_max": 37,
+   "elapsed_us": 2000096
+  }
+ },
+ "ringcap_ok_of_3": {
+  "16000000": 3,
+  "40000000": 3,
+  "80000000": 3
+ },
+ "spec_1s": {
+  "16M_256": {
+   "status": 0,
+   "pairs": 16008173,
+   "frames": 264,
+   "drops": 0,
+   "abandoned": 24562,
+   "ffts": 37757,
+   "processed_pct": 60.6
+  },
+  "16M_512": {
+   "status": 0,
+   "pairs": 16008775,
+   "frames": 141,
+   "drops": 0,
+   "abandoned": 12350,
+   "ffts": 18610,
+   "processed_pct": 60.1
+  },
+  "16M_1024": {
+   "status": 0,
+   "pairs": 16008002,
+   "frames": 75,
+   "drops": 0,
+   "abandoned": 6709,
+   "ffts": 8914,
+   "processed_pct": 57.1
+  },
+  "16M_2048": {
+   "status": 0,
+   "pairs": 16008529,
+   "frames": 37,
+   "drops": 0,
+   "abandoned": 3683,
+   "ffts": 4128,
+   "processed_pct": 52.8
+  },
+  "40M_256": {
+   "status": 0,
+   "pairs": 40011524,
+   "frames": 266,
+   "drops": 0,
+   "abandoned": 118490,
+   "ffts": 37472,
+   "processed_pct": 24.0
+  },
+  "40M_512": {
+   "status": 0,
+   "pairs": 40010354,
+   "frames": 140,
+   "drops": 0,
+   "abandoned": 60114,
+   "ffts": 17885,
+   "processed_pct": 22.9
+  },
+  "40M_1024": {
+   "status": 0,
+   "pairs": 40008955,
+   "frames": 74,
+   "drops": 0,
+   "abandoned": 30512,
+   "ffts": 8499,
+   "processed_pct": 21.8
+  },
+  "40M_2048": {
+   "status": 0,
+   "pairs": 40010667,
+   "frames": 38,
+   "drops": 0,
+   "abandoned": 16309,
+   "ffts": 3196,
+   "processed_pct": 16.4
+  },
+  "80M_256": {
+   "status": 0,
+   "pairs": 80007511,
+   "frames": 266,
+   "drops": 0,
+   "abandoned": 277006,
+   "ffts": 34561,
+   "processed_pct": 11.1
+  },
+  "80M_512": {
+   "status": 0,
+   "pairs": 80010081,
+   "frames": 142,
+   "drops": 0,
+   "abandoned": 138759,
+   "ffts": 17000,
+   "processed_pct": 10.9
+  },
+  "80M_1024": {
+   "status": 0,
+   "pairs": 80015322,
+   "frames": 75,
+   "drops": 0,
+   "abandoned": 71450,
+   "ffts": 6441,
+   "processed_pct": 8.3
+  },
+  "80M_2048": {
+   "status": 0,
+   "pairs": 80007630,
+   "frames": 39,
+   "drops": 0,
+   "abandoned": 35769,
+   "ffts": 3176,
+   "processed_pct": 8.2
+  }
+ },
+ "iqs_1s_16M_8bit": {
+  "64": {
+   "status": 0,
+   "pairs": 16008484,
+   "frames": 88,
+   "drops": 401,
+   "abandoned": 0,
+   "ffts": 0
+  },
+  "256": {
+   "status": 0,
+   "pairs": 16008397,
+   "frames": 86,
+   "drops": 37,
+   "abandoned": 0,
+   "ffts": 0
+  }
+ }
+}
