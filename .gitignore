@@ -38,3 +38,6 @@ Thumbs.db
 /firmware/build/
 /firmware/sdkconfig
 /firmware/sdkconfig.old
+
+# Local session notes
+/session.md
