@@ -49,10 +49,17 @@ tooling, experimental probe builds (`S3_RF_PROBE`, `SAMPLE_RATE_PROBE`,
 `FILTER_REGISTER_PROBE`, `RING_PROBE`), the text protocol and its tests. The
 multi-chip code remains on `main`.
 
+## Verified
+
+* **I/Q orientation is correct on every tuning path** (`tests/hw/iq_orientation.py`,
+  2026-10-13): known tones at +/-937 kHz appear on the correct side at 1900 and
+  2100 MHz (6/5 divider), 2300/2402/2440/2480/2600 MHz (direct PLL) and
+  2412/2437/2462 MHz (channel table), 22-53 dB SNR. An earlier inverted reading
+  came from the TX spike's offset-tone setup and demodulator, not the receiver.
+  Observed tone offsets differ by up to ~150 kHz between paths: frequency
+  accuracy, not orientation.
+
 ## Open
 
-* RX I/Q spectral mirroring is unproven: a tone at 2437 MHz (channel path) shows
-  the correct sign; one measurement on the 2402 MHz non-channel path appeared
-  inverted. Measure every tuning path with a known tone before correcting.
 * `phy_param + 288` (DC-valid flag) is verified on hardware with the IDF 5.3 PHY
   library only (the symbol itself exists in 5.1 too).
