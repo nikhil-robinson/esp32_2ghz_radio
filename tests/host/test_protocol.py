@@ -56,7 +56,7 @@ class FakeSerial:
 class Client(unittest.TestCase):
     def make(self, data):
         d = dev_mod.Device.__new__(dev_mod.Device)
-        d.serial, d.timeout, d._seq = FakeSerial(data), 0.5, 0
+        d.serial, d.timeout, d._seq = FakeSerial(data), 0.5, 0  # bypasses __init__ (no resync)
         return d
 
     def test_request_skips_noise_and_other_seq(self):
@@ -96,7 +96,7 @@ class Client(unittest.TestCase):
         import numpy as np
         words = np.array([(i & 0x3ff) | ((-i & 0x3ff) << 10) for i in range(-5, 6)], np.uint32)
         iq = dev_mod.decode_iq32(words)
-        self.assertEqual(iq[0], -5 + 5j)
+        self.assertEqual(iq[0], -5 - 5j)  # raw Q is inverted; decoder corrects it
         packed = bytearray()
         for j in range(0, len(words), 2):
             a = int(words[j]); b = int(words[j + 1]) if j + 1 < len(words) else 0

@@ -51,13 +51,18 @@ multi-chip code remains on `main`.
 
 ## Verified
 
-* **I/Q orientation is correct on every tuning path** (`tests/hw/iq_orientation.py`,
-  2026-10-13): known tones at +/-937 kHz appear on the correct side at 1900 and
-  2100 MHz (6/5 divider), 2300/2402/2440/2480/2600 MHz (direct PLL) and
-  2412/2437/2462 MHz (channel table), 22-53 dB SNR. An earlier inverted reading
-  came from the TX spike's offset-tone setup and demodulator, not the receiver.
-  Observed tone offsets differ by up to ~150 kHz between paths: frequency
-  accuracy, not orientation.
+* **Raw I/Q is spectrally mirrored (raw Q inverted) - fixed.** Proven without
+  any assumption about a transmitter: a plain carrier at fixed 2445 MHz moves the
+  wrong way as the LO steps 2441..2449 MHz. Corrected at the library boundary:
+  `esp_sdr_word_q()` negates Q, spectrum bins are mirrored at encode time (free),
+  the IQ stream negates Q at output, host decoders negate Q. Raw words stay raw.
+  Verified by `tests/hw/iq_orientation.py` (burst, spectrum and IQ stream paths).
+  An earlier tone-based test reported "correct" because the TX tone-field sign
+  differs between the RF-test-mode spike and the combined TX firmware.
+* **Tuning accuracy over the whole range**, `tests/hw/tuning_accuracy.py`: the
+  receiver's 40 MHz crystal harmonics at 1920, 2160, 2400, 2520 and 2760 MHz
+  appear within +-2 kHz of where they belong from every LO, including fractional
+  LOs of the 6/5 divider band. The PLL offset sign is correct.
 
 ## Open
 

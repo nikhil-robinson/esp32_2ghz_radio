@@ -46,12 +46,13 @@ class Frame:
 
 
 def decode_iq32(words: np.ndarray) -> np.ndarray:
-    """Raw dump words -> complex samples (10-bit two's complement I/Q)."""
+    """Raw dump words -> complex samples. The hardware's raw Q is inverted
+    (mirrored spectrum); the returned samples are corrected."""
     i = (words & 0x3ff).astype(np.int16)
     q = ((words >> 10) & 0x3ff).astype(np.int16)
     i[i >= 512] -= 1024
     q[q >= 512] -= 1024
-    return (i + 1j * q).astype(np.complex64)
+    return (i - 1j * q).astype(np.complex64)
 
 
 def decode_iq10(data: bytes, samples: int) -> np.ndarray:
@@ -65,8 +66,9 @@ def decode_iq10(data: bytes, samples: int) -> np.ndarray:
 
 
 def decode_iq8(data: bytes) -> np.ndarray:
+    """CAPTURE format IQ8 (raw bytes, inverted Q) -> corrected samples."""
     v = np.frombuffer(data, np.int8).astype(np.float32)
-    return (v[0::2] + 1j * v[1::2]).astype(np.complex64)
+    return (v[0::2] - 1j * v[1::2]).astype(np.complex64)
 
 
 class Device:
@@ -74,7 +76,15 @@ class Device:
         self.serial = serial.Serial(port, baud, timeout=timeout)
         self.timeout = timeout
         self._seq = 0
-        time.sleep(0.1)
+        self.resync()
+
+    def resync(self):
+        """End any stream a previous client left running and flush its output.
+
+        A running stream treats incoming bytes as a stop request and discards
+        them, so a request sent into it would never be answered."""
+        self.send('STOP')
+        time.sleep(0.7)  # stream drain deadline on the device is 0.5 s
         self.serial.reset_input_buffer()
 
     def close(self):

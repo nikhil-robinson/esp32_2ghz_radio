@@ -44,6 +44,9 @@ static int16_t fft_buffer[2 * ESP_SDR_MAX_NFFT] __attribute__((aligned(16)));
 static float accumulators[2][ESP_SDR_MAX_NFFT];
 static float *accumulator = accumulators[0];
 static uint16_t natural_bin[ESP_SDR_MAX_NFFT];  /* FFT slot <-> natural bin (involution) */
+/* The FFT runs on raw samples, whose spectrum is mirrored (raw Q inverted):
+ * output bin k is read from the slot of raw bin (N - k) mod N. */
+static uint16_t slot_of_bin[ESP_SDR_MAX_NFFT];
 static uint8_t frame_out[FRAME_BINS_AT + ESP_SDR_MAX_NFFT + ESP_SDR_RECORD_CRC_SIZE];
 static int16_t *assist_buffer;  /* heap: BSS must end below the RF ring */
 static unsigned nfft, nfft_log2;
@@ -159,6 +162,9 @@ static void prepare_tables(unsigned n)
         }
         natural_bin[i] = (uint16_t)reversed;
     }
+    for (unsigned k = 0; k < n; k++) {
+        slot_of_bin[k] = natural_bin[(n - k) & (n - 1)];
+    }
     nfft = n;
     nfft_log2 = log2n;
 }
@@ -215,7 +221,7 @@ IRAM_ATTR static void unpack(int16_t *dst, const uint32_t *bank, unsigned at, un
         for (; from < end; from++) {
             uint32_t w = bank[(at + from) & DUMP_RING_MASK];
             dst[2 * from] = (int16_t)((esp_sdr_word_i(w) * window_q15[from]) >> 9);
-            dst[2 * from + 1] = (int16_t)((esp_sdr_word_q(w) * window_q15[from]) >> 9);
+            dst[2 * from + 1] = (int16_t)((esp_sdr_word_raw_q(w) * window_q15[from]) >> 9);
         }
     }
 }
@@ -382,7 +388,7 @@ STREAM_HOT static void emit_chunk(void)
     uint32_t *stored = (uint32_t *)accumulator;
     const bool max_hold = g_stream.config->max_hold;
     for (unsigned k = run.emit_position; k < end; k++) {
-        unsigned slot = natural_bin[k];
+        unsigned slot = slot_of_bin[k];
         bins[k] = db_code(power_bits(stored[slot], max_hold), run.emit_offset_q4);
         stored[slot] = 0;
     }
@@ -558,7 +564,8 @@ IRAM_ATTR static void worker_encode_step(void)
         unsigned end = encoder.bin + WORKER_ENCODE_CHUNK < nfft ? encoder.bin + WORKER_ENCODE_CHUNK : nfft;
         uint8_t *bins = frame_out + FRAME_BINS_AT;
         for (unsigned k = encoder.bin; k < end; k++) {
-            bins[natural_bin[k]] = db_code(power_bits(encoder.source[k], encoder.max_hold), encoder.offset_q4);
+            bins[(nfft - natural_bin[k]) & (nfft - 1)] =
+                db_code(power_bits(encoder.source[k], encoder.max_hold), encoder.offset_q4);
             encoder.source[k] = 0;
         }
         encoder.bin = end;

@@ -34,7 +34,9 @@ void fir_dot_split(const fir_job_t *job);
 void fir_dot_decim8_taps32(const fir_job_t *job);
 void iq_rotate_quarter_fs(int16_t *wi, int16_t *wq, unsigned groups8, const int16_t *masks);
 
-/* z * j^n (shift by +fs/4): m1 = {1,0,-1,0}, m2 = {0,-1,0,1}, m3 = -m2. */
+/* z * j^n (shift by +fs/4) on raw samples: a band fs/4 ABOVE the LO sits at
+ * -fs/4 in the raw (mirrored) stream, so this centres it.
+ * m1 = {1,0,-1,0}, m2 = {0,-1,0,1}, m3 = -m2. */
 static const int16_t ROTATE_MASKS[24] __attribute__((aligned(16))) = {
     1, 0, -1, 0, 1, 0, -1, 0, 0, -1, 0, 1, 0, -1, 0, 1, 0, 1, 0, -1, 0, 1, 0, -1};
 
@@ -141,7 +143,7 @@ IRAM_ATTR static uint32_t stage_run(fir_stage_t *s, int16_t *oi, int16_t *oq)
 static inline void stage1_push_one(const uint32_t *bank, uint32_t at)
 {
     uint32_t w = bank[at];
-    int16_t i = (int16_t)(esp_sdr_word_i(w) * 64), q = (int16_t)(esp_sdr_word_q(w) * 64);
+    int16_t i = (int16_t)(esp_sdr_word_i(w) * 64), q = (int16_t)(esp_sdr_word_raw_q(w) * 64);  /* raw, like the PIE path */
     if (rotate) {
         switch ((uint32_t)(stage1.base + stage1.filled) & 3u) {  /* z * j^n */
         case 1: { int16_t t = i; i = (int16_t)-q; q = t; break; }
@@ -193,6 +195,7 @@ IRAM_ATTR static void flush_frame(void)
 
 IRAM_ATTR static inline void put_sample(int32_t i, int32_t q)
 {
+    q = -q;  /* filters run on raw samples (inverted Q); output the corrected sample */
     if (iq.shift) {  /* round to nearest: a plain shift floors and leaves a -0.5 LSB DC */
         int32_t half = 1 << (iq.shift - 1);
         i = (i + half) >> iq.shift;

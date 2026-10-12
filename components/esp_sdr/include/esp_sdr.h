@@ -61,9 +61,17 @@ typedef struct {
     uint8_t active_q; /**< filter code currently in the Q register */
 } esp_sdr_filter_t;
 
-/** One raw sample word: I in bits 0..9, Q in bits 10..19 (10-bit two's complement), gain in bits 20..27. */
+/**
+ * One raw dump word: I in bits 0..9, Q in bits 10..19 (10-bit two's complement),
+ * gain in bits 20..27. The hardware's raw Q is inverted (its spectrum is
+ * mirrored, measured with a fixed carrier and a swept LO); these accessors
+ * return the corrected sample I + jQ. Spectrum and IQ stream outputs are
+ * already corrected.
+ */
 static inline int16_t esp_sdr_word_i(uint32_t w) { return (int16_t)((int32_t)(w << 22) >> 22); }
-static inline int16_t esp_sdr_word_q(uint32_t w) { return (int16_t)((int32_t)(w << 12) >> 22); }
+static inline int16_t esp_sdr_word_q(uint32_t w) { return (int16_t)-((int32_t)(w << 12) >> 22); }
+/** Raw (uncorrected) Q, as stored by the hardware. */
+static inline int16_t esp_sdr_word_raw_q(uint32_t w) { return (int16_t)((int32_t)(w << 12) >> 22); }
 
 /* ---- setup ------------------------------------------------------------- */
 
