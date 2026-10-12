@@ -1,0 +1,409 @@
+/*
+ * Host requests -> esp_sdr calls -> reply frames (protocol in esp_sdr_protocol.h).
+ * Every request is answered: ACK or a typed reply, and every capture or
+ * stream ends with RUN_DONE.
+ */
+#include "requests.h"
+
+#include "esp_heap_caps.h"
+#include "esp_sdr.h"
+#include "frame.h"
+#include "link.h"
+#include "protocol.h"
+#include "firmware_version.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "gpio_control.h"
+#include "soc/soc_caps.h"
+
+#define MAX_DURATION_MS 86400000u
+#define MAX_REPEATS 1000u
+#define MIN_UART_BAUD 115200u
+#define MAX_UART_BAUD 3000000u
+#define IQ_AUTO_SHIFT 255u
+#define FIR_OUTPUT_BITS 15u
+
+typedef struct {
+    uint8_t seq;
+    uint8_t type;
+} reply_to_t;
+
+static void ack(reply_to_t to, uint8_t error)
+{
+    msg_ack_t m = {.error = error, .request = to.type};
+    link_send_frame(RSP_ACK, to.seq, &m, sizeof(m));
+}
+
+static uint8_t error_of(esp_err_t err)
+{
+    switch (err) {
+    case ESP_OK: return WIRE_ERR_NONE;
+    case ESP_ERR_INVALID_ARG: return WIRE_ERR_BAD_ARGUMENT;
+    case ESP_ERR_TIMEOUT: return WIRE_ERR_TIMEOUT;
+    case ESP_ERR_NO_MEM: return WIRE_ERR_NO_MEMORY;
+    case ESP_ERR_NOT_SUPPORTED: return WIRE_ERR_UNSUPPORTED;
+    default: return WIRE_ERR_HARDWARE;
+    }
+}
+
+static void run_done(reply_to_t to, const esp_sdr_run_result_t *r, uint8_t error)
+{
+    msg_run_done_t m = {.error = error};
+    if (r) {
+        m.status = (uint8_t)r->status;
+        m.stopped_by_host = r->stopped;
+        m.detail = r->detail;
+        m.units = r->units;
+        m.late_max = r->late_max;
+        m.pairs = r->pairs;
+        m.elapsed_us = r->elapsed_us;
+        m.work_max = r->work_max;
+        m.frames = r->frames;
+        m.drops = r->drops;
+        m.abandoned = r->abandoned;
+        m.ffts = r->ffts;
+        m.lost_pairs = r->lost_pairs;
+    }
+    link_send_frame(RSP_RUN_DONE, to.seq, &m, sizeof(m));
+}
+
+/* ---- identity and link -------------------------------------------------- */
+
+static void get_info(reply_to_t to)
+{
+    msg_info_t m = {
+        .protocol = PROTOCOL_VERSION,
+        .min_mhz = ESP_SDR_MIN_MHZ,
+        .max_mhz = ESP_SDR_MAX_MHZ,
+        .bw_min_mhz = ESP_SDR_MIN_BANDWIDTH_MHZ,
+        .bw_max_mhz = ESP_SDR_MAX_BANDWIDTH_MHZ,
+        .rates = (1u << ESP_SDR_RATE_80M) | (1u << ESP_SDR_RATE_40M) | (1u << ESP_SDR_RATE_16M),
+        .max_samples = ESP_SDR_MAX_BURST_SAMPLES,
+        .max_nfft = ESP_SDR_MAX_NFFT,
+    };
+    esp_sdr_gain_t gain;
+    esp_sdr_get_gain(&gain);
+    m.gain_max = gain.max_index;
+    static const char version[] = FIRMWARE_VERSION_JSON;
+    link_send_frame_split(RSP_INFO, to.seq, &m, sizeof(m), version, sizeof(version) - 1);
+}
+
+static void set_baud(reply_to_t to, const msg_set_baud_t *q)
+{
+    if (!link_uart_active()) {
+        ack(to, WIRE_ERR_UNSUPPORTED);
+        return;
+    }
+    if (q->baud < MIN_UART_BAUD || q->baud > MAX_UART_BAUD) {
+        ack(to, WIRE_ERR_BAD_ARGUMENT);
+        return;
+    }
+    ack(to, WIRE_ERR_NONE);  /* at the old rate */
+    link_set_uart_baud(q->baud);
+}
+
+/* ---- receiver settings -------------------------------------------------- */
+
+static void get_gain(reply_to_t to)
+{
+    esp_sdr_gain_t g;
+    esp_sdr_get_gain(&g);
+    msg_gain_t m = {.manual = g.manual, .index = g.index, .max_index = g.max_index, .forced = g.forced};
+    link_send_frame(RSP_GAIN, to.seq, &m, sizeof(m));
+}
+
+static void get_filter(reply_to_t to)
+{
+    esp_sdr_filter_t f;
+    esp_sdr_get_filter(&f);
+    msg_filter_t m = {.code = f.code, .active_i = f.active_i, .active_q = f.active_q};
+    link_send_frame(RSP_FILTER, to.seq, &m, sizeof(m));
+}
+
+static void get_workers(reply_to_t to)
+{
+    msg_workers_t m = {.mode = (uint8_t)esp_sdr_get_workers(), .core1_alive = esp_sdr_core1_alive(),
+                               .assist_blocks = esp_sdr_assist_blocks()};
+    link_send_frame(RSP_WORKERS, to.seq, &m, sizeof(m));
+}
+
+static void get_memory(reply_to_t to)
+{
+    msg_memory_t m = {
+        .heap_free = (uint32_t)heap_caps_get_free_size(MALLOC_CAP_8BIT),
+        .heap_min_free = (uint32_t)heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT),
+        .banks = ESP_SDR_RING_BANKS,
+        .threshold = ESP_SDR_RING_THRESHOLD,
+    };
+    link_send_frame(RSP_MEMORY, to.seq, &m, sizeof(m));
+}
+
+/* ---- burst capture ------------------------------------------------------ */
+
+static void capture(reply_to_t to, const msg_capture_t *q)
+{
+    if (q->rate > ESP_SDR_RATE_16M || q->format > WIRE_FORMAT_IQ8 || !q->repeats ||
+        q->repeats > MAX_REPEATS || q->samples < ESP_SDR_MIN_BURST_SAMPLES ||
+        q->samples > ESP_SDR_MAX_BURST_SAMPLES) {
+        run_done(to, NULL, WIRE_ERR_BAD_ARGUMENT);
+        return;
+    }
+    for (uint32_t i = 0; i < q->repeats; i++) {
+        const uint32_t *words;
+        uint32_t elapsed_us;
+        esp_err_t err = esp_sdr_capture((esp_sdr_rate_t)q->rate, q->samples, &words, &elapsed_us);
+        if (err != ESP_OK) {
+            run_done(to, NULL, error_of(err));
+            return;
+        }
+        uint32_t *buffer = (uint32_t *)words;  /* the dump window; packed in place */
+        size_t bytes = q->format == WIRE_FORMAT_IQ10 ? esp_sdr_pack_iq10(buffer, q->samples)
+                     : q->format == WIRE_FORMAT_IQ8  ? esp_sdr_pack_iq8(buffer, q->samples)
+                                                             : (size_t)q->samples * 4u;
+        msg_data_t m = {.samples = q->samples, .elapsed_us = elapsed_us, .format = q->format,
+                                .rate = q->rate};
+        if (!link_send_frame_split(RSP_DATA, to.seq, &m, sizeof(m), buffer, bytes)) {
+            return;  /* host gone: nothing more can be delivered */
+        }
+        if (i + 1 < q->repeats) {
+            vTaskDelay(1);
+        }
+    }
+    run_done(to, NULL, WIRE_ERR_NONE);
+}
+
+/* ---- streams ------------------------------------------------------------ */
+
+static void send_ring_data(reply_to_t to, const esp_sdr_run_result_t *r, esp_sdr_rate_t rate)
+{
+    uint32_t counts[ESP_SDR_RING_BANKS] = {0};
+    const uint32_t *span[2 * ESP_SDR_RING_BANKS];
+    uint32_t span_words[2 * ESP_SDR_RING_BANKS];
+    uint32_t total = 0;
+    for (unsigned u = 0; u < r->units; u++) {
+        esp_sdr_run_unit(r, u, &span[2 * u], &span_words[2 * u], &span[2 * u + 1], &span_words[2 * u + 1]);
+        counts[u] = r->unit[u].count;
+        total += r->unit[u].count;
+    }
+    msg_ring_data_t m = {.rate_hz = esp_sdr_rate_hz(rate), .units = r->units,
+                                 .count0 = counts[0], .count1 = counts[1], .count2 = counts[2]};
+    /* Header, message, then the spans back to back, one CRC over all of it. */
+    uint8_t header[ESP_SDR_RECORD_HEADER_SIZE];
+    uint32_t crc = frame_write_header(header, RSP_RING_DATA, to.seq, (uint32_t)sizeof(m) + total * 4u);
+    crc = frame_crc32(crc, &m, sizeof(m));
+    for (unsigned s = 0; s < 2 * r->units; s++) {
+        crc = frame_crc32(crc, span[s], span_words[s] * 4u);
+    }
+    bool ok = link_send(header, sizeof(header)) && link_send(&m, sizeof(m));
+    for (unsigned s = 0; ok && s < 2 * r->units; s++) {
+        ok = link_send(span[s], span_words[s] * 4u);
+    }
+    if (ok) {
+        link_send(&crc, sizeof(crc));
+    }
+}
+
+static bool valid_duration(uint32_t ms)
+{
+    /* Open-ended runs need a stop byte from the host; only USB reads it reliably while masked. */
+    return ms <= MAX_DURATION_MS && (ms || !link_uart_active());
+}
+
+static void run_stream(reply_to_t to, esp_sdr_run_config_t *c)
+{
+    esp_sdr_run_result_t r;
+    c->tag = to.seq;
+    esp_sdr_run(c, link_stream_sink(), &r);
+    link_discard_input();  /* the stop request must not reach the parser */
+    if (c->mode == ESP_SDR_RUN_CAPTURE && r.status == ESP_SDR_RUN_OK) {
+        send_ring_data(to, &r, c->rate);
+    }
+    run_done(to, &r, WIRE_ERR_NONE);
+}
+
+static void ring_stats(reply_to_t to, const msg_ring_stats_t *q)
+{
+    if (q->rate > ESP_SDR_RATE_16M || !valid_duration(q->duration_ms)) {
+        run_done(to, NULL, WIRE_ERR_BAD_ARGUMENT);
+        return;
+    }
+    esp_sdr_run_config_t c = {.mode = ESP_SDR_RUN_STATS, .rate = (esp_sdr_rate_t)q->rate,
+                              .duration_ms = q->duration_ms};
+    run_stream(to, &c);
+}
+
+static void ring_capture(reply_to_t to, const msg_ring_capture_t *q)
+{
+    if (q->rate > ESP_SDR_RATE_16M || !q->units || q->units > ESP_SDR_RING_BANKS) {
+        run_done(to, NULL, WIRE_ERR_BAD_ARGUMENT);
+        return;
+    }
+    esp_sdr_run_config_t c = {.mode = ESP_SDR_RUN_CAPTURE, .rate = (esp_sdr_rate_t)q->rate,
+                              .capture_units = q->units};
+    run_stream(to, &c);
+}
+
+static void spectrum(reply_to_t to, const msg_spectrum_t *q)
+{
+    if (link_uart_active()) {
+        run_done(to, NULL, WIRE_ERR_UNSUPPORTED);  /* frames need USB throughput */
+        return;
+    }
+    if (q->rate > ESP_SDR_RATE_16M || q->max_hold > 1 || q->stats > 1 || !valid_duration(q->duration_ms) ||
+        q->nfft < ESP_SDR_MIN_NFFT || q->nfft > ESP_SDR_MAX_NFFT || (q->nfft & (q->nfft - 1))) {
+        run_done(to, NULL, WIRE_ERR_BAD_ARGUMENT);
+        return;
+    }
+    esp_sdr_run_config_t c = {.mode = ESP_SDR_RUN_SPECTRUM, .rate = (esp_sdr_rate_t)q->rate,
+                              .duration_ms = q->duration_ms, .nfft = q->nfft, .max_hold = q->max_hold,
+                              .stats = q->stats};
+    run_stream(to, &c);
+}
+
+static void iq_stream(reply_to_t to, const msg_iq_stream_t *q)
+{
+    if (link_uart_active()) {
+        run_done(to, NULL, WIRE_ERR_UNSUPPORTED);
+        return;
+    }
+    if (q->rate > ESP_SDR_RATE_16M || q->rotate > 1 || !valid_duration(q->duration_ms)) {
+        run_done(to, NULL, WIRE_ERR_BAD_ARGUMENT);
+        return;
+    }
+    /* Default shift scales the 15-bit FIR output to the requested width. */
+    uint8_t shift = q->shift != IQ_AUTO_SHIFT ? q->shift : q->bits < FIR_OUTPUT_BITS ? FIR_OUTPUT_BITS - q->bits : 0;
+    esp_sdr_run_config_t c = {.mode = ESP_SDR_RUN_IQ, .rate = (esp_sdr_rate_t)q->rate,
+                              .duration_ms = q->duration_ms, .iq_decimation = q->decimation, .iq_bits = q->bits,
+                              .iq_shift = shift, .iq_rotate = q->rotate};
+    run_stream(to, &c);  /* the library validates decimation/bits/shift (RUN_FAIL_ARG) */
+}
+
+/* ---- GPIO --------------------------------------------------------------- */
+
+static void get_gpio(reply_to_t to)
+{
+    uint8_t pairs[2 * SOC_GPIO_PIN_COUNT];
+    size_t n = gpio_control_list(pairs, SOC_GPIO_PIN_COUNT);
+    link_send_frame(RSP_GPIO, to.seq, pairs, 2 * n);
+}
+
+/* ---- dispatch ----------------------------------------------------------- */
+
+#define PAYLOAD(type) ((const type *)request->payload)
+#define NEEDS(type)                                   \
+    do {                                              \
+        if (request->length != sizeof(type)) {        \
+            ack(to, WIRE_ERR_BAD_LENGTH);     \
+            return;                                   \
+        }                                             \
+    } while (0)
+
+void requests_handle(const link_request_t *request)
+{
+    const reply_to_t to = {.seq = request->seq, .type = request->type};
+    switch (request->type) {
+    case REQ_GET_INFO:
+        get_info(to);
+        return;
+    case REQ_RELEASE:
+        link_release();
+        ack(to, WIRE_ERR_NONE);
+        return;
+    case REQ_SET_BAUD:
+        NEEDS(msg_set_baud_t);
+        set_baud(to, PAYLOAD(msg_set_baud_t));
+        return;
+    case REQ_SET_FREQUENCY:
+        NEEDS(msg_set_frequency_t);
+        ack(to, error_of(esp_sdr_set_frequency(PAYLOAD(msg_set_frequency_t)->mhz)));
+        return;
+    case REQ_SET_PLL_OFFSET:
+        NEEDS(msg_set_pll_offset_t);
+        esp_sdr_set_pll_offset(PAYLOAD(msg_set_pll_offset_t)->khz);
+        ack(to, WIRE_ERR_NONE);
+        return;
+    case REQ_SET_GAIN: {
+        NEEDS(msg_set_gain_t);
+        const msg_set_gain_t *q = PAYLOAD(msg_set_gain_t);
+        ack(to, q->manual > 1 ? WIRE_ERR_BAD_ARGUMENT : error_of(esp_sdr_set_gain(q->manual, q->index)));
+        return;
+    }
+    case REQ_GET_GAIN:
+        get_gain(to);
+        return;
+    case REQ_SET_FILTER:
+        NEEDS(msg_set_filter_t);
+        ack(to, error_of(esp_sdr_set_filter(PAYLOAD(msg_set_filter_t)->code)));
+        return;
+    case REQ_SET_BANDWIDTH:
+        NEEDS(msg_set_bandwidth_t);
+        ack(to, error_of(esp_sdr_set_bandwidth(PAYLOAD(msg_set_bandwidth_t)->mhz)));
+        return;
+    case REQ_GET_FILTER:
+        get_filter(to);
+        return;
+    case REQ_SET_DC_MODE: {
+        NEEDS(msg_set_dc_mode_t);
+        uint8_t mode = PAYLOAD(msg_set_dc_mode_t)->mode;
+        if (mode > 1) {
+            ack(to, WIRE_ERR_BAD_ARGUMENT);
+            return;
+        }
+        esp_sdr_set_dc_mode(mode);
+        ack(to, WIRE_ERR_NONE);
+        return;
+    }
+    case REQ_SET_WORKERS: {
+        NEEDS(msg_set_workers_t);
+        uint8_t mode = PAYLOAD(msg_set_workers_t)->mode;
+        if (mode > ESP_SDR_WORKERS_DUAL) {
+            ack(to, WIRE_ERR_BAD_ARGUMENT);
+            return;
+        }
+        esp_sdr_set_workers((esp_sdr_workers_t)mode);
+        ack(to, WIRE_ERR_NONE);
+        return;
+    }
+    case REQ_GET_WORKERS:
+        get_workers(to);
+        return;
+    case REQ_GET_MEMORY:
+        get_memory(to);
+        return;
+    case REQ_CAPTURE:
+        NEEDS(msg_capture_t);
+        capture(to, PAYLOAD(msg_capture_t));
+        return;
+    case REQ_RING_STATS:
+        NEEDS(msg_ring_stats_t);
+        ring_stats(to, PAYLOAD(msg_ring_stats_t));
+        return;
+    case REQ_RING_CAPTURE:
+        NEEDS(msg_ring_capture_t);
+        ring_capture(to, PAYLOAD(msg_ring_capture_t));
+        return;
+    case REQ_SPECTRUM:
+        NEEDS(msg_spectrum_t);
+        spectrum(to, PAYLOAD(msg_spectrum_t));
+        return;
+    case REQ_IQ_STREAM:
+        NEEDS(msg_iq_stream_t);
+        iq_stream(to, PAYLOAD(msg_iq_stream_t));
+        return;
+    case REQ_STOP:
+        ack(to, WIRE_ERR_NONE);  /* nothing running */
+        return;
+    case REQ_GET_GPIO:
+        get_gpio(to);
+        return;
+    case REQ_SET_GPIO: {
+        NEEDS(msg_set_gpio_t);
+        const msg_set_gpio_t *q = PAYLOAD(msg_set_gpio_t);
+        ack(to, error_of(gpio_control_set(q->pin, (gpio_control_state_t)q->state)));
+        return;
+    }
+    default:
+        ack(to, WIRE_ERR_UNKNOWN_COMMAND);
+        return;
+    }
+}

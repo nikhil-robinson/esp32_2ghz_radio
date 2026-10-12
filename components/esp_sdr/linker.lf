@@ -1,0 +1,8 @@
+# Spectrum and IQ streams run these kernels with interrupts masked between
+# ring polls; keep them out of flash so a cache miss cannot delay a bank switch.
+[mapping:esp_sdr_kernels]
+archive: libesp_sdr.a
+entries:
+    fft_sc16_rounded (noflash)
+    iq10_unpack_windowed (noflash)
+    fir_kernels (noflash)

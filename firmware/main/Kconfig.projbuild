@@ -1,0 +1,30 @@
+menu "ESP-SDR"
+
+    config ESP_SDR_UART_ENABLED
+        bool "Host link on UART0 in addition to USB-Serial-JTAG"
+        default y
+        help
+            Accept host requests on UART0 (for boards with a USB-to-UART
+            bridge). Native USB-Serial-JTAG is always available.
+
+    config ESP_SDR_UART_BAUD
+        int "UART0 baud rate"
+        depends on ESP_SDR_UART_ENABLED
+        range 115200 3000000
+        default 2000000
+        help
+            8N1, no flow control. SET_BAUD changes the rate until reset.
+
+    config ESP_SDR_UART_TX_PIN
+        int "UART0 TX GPIO"
+        depends on ESP_SDR_UART_ENABLED
+        range 0 48
+        default 43
+
+    config ESP_SDR_UART_RX_PIN
+        int "UART0 RX GPIO"
+        depends on ESP_SDR_UART_ENABLED
+        range 0 48
+        default 44
+
+endmenu
