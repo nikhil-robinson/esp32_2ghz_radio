@@ -1,193 +1,184 @@
 # ESP-SDR S3 radio library — design
 
-Status: draft for review · Branch: `s3-radio-lib` · Date: 2026-10-12
+Status: draft for review (rev 2) · Branch: `s3-radio-lib` · Date: 2026-10-12
 
-## 1. Goal
+## 1. Goal and phases
 
-Turn the ESP32-S3's built-in 2.4 GHz radio into a single, documented C/C++ library
-that can **receive** (raw I/Q, spectrum, full-band scan) and **transmit** (GFSK
-packets for common low-cost 2.4 GHz protocols), so developers can talk to their own
-RC/robotics gear with a ~$2 board instead of buying dedicated radios.
+Turn the ESP32-S3's built-in 2.4 GHz radio into a clean, documented, fast C/C++
+library plus one firmware, so developers can receive and transmit on 2.4 GHz with a
+~$2 board.
 
-Success for v1:
+- **Phase 1 — full rewrite (this spec's main subject).** Every S3 file is rewritten
+  line by line: proper module and function names, consistent standards, bugs fixed,
+  stale code removed, hot paths kept or made faster. **No new features.** Every
+  capability that works today must still work, measured as well or better.
+- **Phase 2 — new features (summarised in §12, own spec later).** TX (GFSK,
+  BLE/nRF24/XN297/LT8900 framers), region model, full-band scan.
 
-- One firmware image does RX and TX on the same board.
-- A stock BLE receiver accepts BLE advertisements produced by the library.
-- nRF24 / XN297 / LT8900 frames produced by the library decode correctly in
-  datasheet-based decoders, verified on air with a second board.
-- A full scan of 1840–2790 MHz runs and locates a known transmitter.
-- The existing S3 RX hardware smoke test still passes.
+Both phases are ESP32-S3 only. The multi-chip code stays on `main` untouched.
 
-## 2. Scope
+## 2. Phase 1 scope
 
-**In:** ESP32-S3 only. RX (burst capture, continuous ring, SPEC FFT, IQ stream —
-the existing engine), full-band scan, TX tone + GFSK, protocol framers for BLE
-advertising, nRF24 Enhanced ShockBurst (also covers BK2423), XN297, LT8900;
-region-based TX permission; serial firmware; examples; host + hardware tests.
+**Rewritten:** the 31 files the S3 build uses today (≈ 4 200 lines, list in
+Appendix A), the build system, Python tools and tests.
 
-**Out (later versions):** other ESP32 chips (preserved on `main`), Spektrum DSM,
-LoRa/ELRS, CC1101 sub-GHz backend, frequency-hopping protocols with binding,
-Arduino packaging, raw-I/Q TX.
+**Deleted on this branch:**
 
-## 3. Established facts this design relies on
+- All non-S3 targets and families, S31 streaming + web UI, `platform/esp32s2/`,
+  per-chip `sdkconfig.defaults.*`, `partitions-stream.csv`.
+- Web/browser tooling: `.github/workflows/rebuild-site.yml`,
+  `tools/export_web_firmware.py`, `tools/collect_firmware.py` and their tests.
+- Experimental probe builds that are never packaged: `S3_RF_PROBE`,
+  `SAMPLE_RATE_PROBE`, `FILTER_REGISTER_PROBE`, `RING_PROBE`,
+  `main/diagnostics/`. (Their verified findings are kept as constants/comments.)
+- Chip-specific tests for deleted targets.
 
-Verified on hardware with two S3 boards on 2026-10-12 (spike code, not kept):
+**Wire protocol:** clean break. The browser app is not supported.
 
-| Fact | Evidence |
+## 3. Capability parity list (must all survive)
+
+From `receiver.c` / `ring_capture.c` today:
+
+| Area | Capability |
 |---|---|
-| Tone generator freq field `0x60006040[9:0]` is live-writable; 156.25 kHz/LSB; bit 1 = centre − dev | Tone moved as commanded; stock BLE scanner accepts +dev, rejects −dev |
-| CPU-timed FSK works at 250 kbps, 1 Mbps, 2 Mbps (±312 kHz) | Transition counts exact on SDR |
-| Hand-built BLE ADV_NONCONN_IND received by stock NimBLE scanner | ~26 % of sent on ch37 (ceiling ≈ 33 %: scanner rotates 37/38/39) |
-| TX works inside RX firmware without RF-test mode: `txcal_debuge_mode()` + `start_tx_tone_step()`; off: `start_tx_tone_step(0…)` + `txcal_work_mode()` | Both boards TX→RX→TX, 40–54 dB |
-| TX→RX switch ≈ 4 ms (3 ms is the fixed settle in `prepare_rx`) | Measured |
-| PLL divider `N = 4f/(3·f_xtal) − 32` (8-bit int): nothing below 960 MHz; VCO locks ≈ 2.2–2.65 GHz direct, 1842–2209 via 6/5 plan | `libphy` disassembly; no TX/RX at 315/433/868/915/5800 MHz; no FM at 100 MHz |
-| RX proven 1840–2790 MHz | Author's measurements |
-| SDR RX I/Q is spectrally mirrored | Inverted polarity decodes on SDR while scanner needs +dev |
-| Builds on ESP-IDF 5.3.5 with `tests/hw/idf53_compat.h` | `s3_smoke.py` ALL PASS |
+| Identity | info, capabilities, version record, tuning range |
+| Transport | USB-Serial-JTAG; UART0 bridge with configurable pins/baud; runtime baud change; port ownership lease |
+| Tuning | frequency set 1840–2790 MHz (direct PLL + 6/5 alternate LO plan), PLL fine offset |
+| Front end | gain manual/auto (HW AGC), RX bandwidth / LPF code, RX limits, DC removal mode, recalibration on staleness |
+| Burst capture | 256–16 380 samples at 16 / 40 / 80 Msps; formats IQ32, IQ10 packed, IQ8; repeated runs |
+| Continuous ring | gapless stats run, gapless multi-unit capture, sentinel-verified continuity |
+| On-chip spectrum | NFFT 256–2048, stride, units/frame, average or max-hold, optional stats, dual-core worker with assist mode |
+| IQ stream | decimated continuous IQ (FIR), bits/shift, optional +fs/4 rotation |
+| GPIO | GPIO command set |
 
-Open, to be resolved during implementation (each has a task in the plan):
-
-- Fine frequency bits `0x60006050[1:0]` (39 kHz) behave as expected → needed for
-  Gaussian shaping and ±160 kHz nRF24 deviation.
-- TX output usable across 1840–2790 MHz (only 2402–2480 measured so far).
-- Correct the RX I/Q mirroring at the library boundary (one place) without
-  breaking the existing RX tests.
-
-## 4. Repository layout (branch `s3-radio-lib`)
+## 4. Repository layout
 
 ```
 components/esp_sdr/
-  include/esp_sdr.h          public C API
-  include/esp_sdr.hpp        C++ wrapper (header-only, no exceptions, no heap)
-  src/core/                  init, region table + checks, caps, errors
-  src/hal/esp32s3/           ONLY place with undocumented registers / ROM / libphy calls
-      tune.c                 PLL + LO plan (from receiver.c / rx_lo.h)
-      rx_capture.c           burst capture (from receiver.c capture())
-      ring_capture.c, *.S    continuous ring / SPEC / IQS (moved as-is)
-      calib.c                rx_recalibration, calibration state
-      tx_tone.c              tone on/off, field writes, cycle-timed player
-  src/dsp/                   spectrum, stats, fft wrapper (moved from main/common)
-  src/proto/                 gfsk_shape.c, ble_adv.c, nrf24_esb.c, xn297.c, lt8900.c (pure C)
-components/esp-dsp/          submodule, pinned v1.8.2
-firmware/esp_sdr_serial/     the single RX+TX firmware (serial command protocol)
-examples/ble_beacon/  examples/nrf24_tx/  examples/spectrum_scan/
-tests/host/                  pure-C unit tests (host gcc) + Python runners
-tests/hw/                    s3_smoke.py, tx_ble_scanner.py, tx_proto_decode.py, scan.py
-tools/                       build/export/version scripts, S3 only
-docs/                        README, API reference, legal note, protocol notes
+  include/esp_sdr.h            public C API
+  include/esp_sdr.hpp          header-only C++ wrapper (no exceptions, no heap)
+  src/core/        sdr.c (init/state), error.c, version.c
+  src/transport/   transport.c (USB + UART, lease), frame.c (wire framing, CRC)
+  src/hal/         ONLY place with undocumented registers / ROM / libphy calls
+      pll.c        tuning + LO plan
+      frontend.c   gain, AGC, LPF/bandwidth, limits, DC
+      calibration.c  recalibration + calibration state
+      capture.c    burst capture engine (dump SRAM window)
+      ring.c       continuous ring + bank rotation + continuity proof
+      core1.c + core1_entry.S   second-core worker bring-up
+      *.S          unpack, FFT rounding, FIR dot product (kept, re-commented)
+  src/dsp/         spectrum.c, fir.c, stats.c, iq_pack.c
+  src/app/         gpio.c
+components/esp-dsp/            submodule v1.8.2
+firmware/esp_sdr_fw/           main.c + command dispatcher, Kconfig, sdkconfig.defaults
+host/esp_sdr/                  Python host library (protocol client) used by tools + tests
+tests/host/                    pure-C unit tests (host gcc) + Python unit tests
+tests/hw/                      hardware parity + performance suite
+tools/                         build.py, version.py
+docs/                          README, protocol.md, architecture.md
 ```
 
-Removed on this branch: `main/targets/*` except S3 code moved into the HAL,
-`main/families/`, S31 streaming + web UI, `platform/esp32s2/`, per-chip sdkconfigs,
-chip-specific tests. `firmware-targets.json` (missing today) is recreated with the
-single S3 profile so `tools/build_firmware.py --matrix` and CI work again.
+Rules: files and functions are named for what they do (`ring_start_run`, not
+`c1_encode_step`); one module, one responsibility; no file over ~600 lines.
 
-## 5. Public API
+## 5. Coding standards
 
-C is the source of truth; C++ wraps it 1:1. All calls return `esp_err_t`.
+- **C:** C17, ESP-IDF style, `clang-format` config checked in; every public symbol
+  prefixed `esp_sdr_`; module-private symbols `static`; `snake_case` verbs.
+- **Headers:** each `.c` has one header; no `.inc`/`.h` files containing function
+  bodies except `static inline` helpers that are proven hot.
+- **Errors:** every fallible call returns `esp_err_t`; no silent `(void)` on
+  results that can fail; `ESP_ERROR_CHECK` only in `main.c` start-up.
+- **Magic numbers:** every register address, bit and ROM symbol gets a named
+  constant/extern in `src/hal/*` with a one-line provenance comment.
+- **Warnings:** `-Wall -Wextra -Werror` on our code; `cppcheck` clean in CI.
+- **Hot paths:** IRAM placement, masked-interrupt windows and assembly kept where
+  measured necessary; each documented with its timing budget.
+- **ESP-IDF:** build on 5.3.x with version checks replacing the force-included
+  compat header; CI builds against the pinned IDF.
+- **Python:** 3.10+, type hints, `ruff` clean.
 
-```c
-typedef enum { ESP_SDR_REGION_UNSET, ESP_SDR_REGION_EU, ESP_SDR_REGION_US,
-               ESP_SDR_REGION_JP, ESP_SDR_REGION_IN, ESP_SDR_REGION_USER } esp_sdr_region_t;
-typedef struct { uint16_t lo_mhz, hi_mhz; int8_t max_dbm; } esp_sdr_band_t;
+## 6. Wire protocol (new)
 
-esp_err_t esp_sdr_init(const esp_sdr_config_t *cfg);          /* region may be UNSET */
-esp_err_t esp_sdr_set_region(esp_sdr_region_t r);
-esp_err_t esp_sdr_set_user_bands(const esp_sdr_band_t *b, size_t n); /* REGION_USER */
+Binary, framed, both directions:
 
-/* RX */
-esp_err_t esp_sdr_rx_tune(uint32_t mhz);                      /* 1840..2790 */
-esp_err_t esp_sdr_rx_capture(esp_sdr_rate_t r, uint32_t *iq_words, size_t n);
-esp_err_t esp_sdr_rx_scan(const esp_sdr_scan_cfg_t *c, esp_sdr_scan_cb_t cb, void *ctx);
-
-/* TX */
-esp_err_t esp_sdr_tx_tone(uint32_t mhz, int32_t offset_khz, bool on);
-esp_err_t esp_sdr_tx_gfsk(const esp_sdr_gfsk_cfg_t *c, const uint8_t *bits, size_t nbits);
-
-/* Protocol framers: bytes in, LSB/MSB-correct air bits out (no hardware). */
-size_t esp_sdr_frame_ble_adv(const esp_sdr_ble_adv_t *p, uint8_t *bits, size_t cap);
-size_t esp_sdr_frame_nrf24(const esp_sdr_nrf24_t *p, uint8_t *bits, size_t cap);
-size_t esp_sdr_frame_xn297(const esp_sdr_xn297_t *p, uint8_t *bits, size_t cap);
-size_t esp_sdr_frame_lt8900(const esp_sdr_lt8900_t *p, uint8_t *bits, size_t cap);
+```
+| magic 0xE5 0xD5 | type u8 | seq u8 | len u32 LE | payload | crc32 LE |
 ```
 
-```cpp
-esp_sdr::Radio radio;
-radio.begin({.region = esp_sdr::Region::EU});
-radio.tx().send(esp_sdr::Nrf24{.mhz = 2476, .addr = {0xE7,0xE7,0xE7,0xE7,0xE7}, .payload = data});
-radio.rx().scan({.from = 1840, .to = 2790, .step_mhz = 4}, on_bin);
-```
+- Host → device: `type` = command id, payload = packed little-endian struct.
+- Device → host: response frames echo `seq`; status code first; bulk data
+  (captures, spectra, IQ) travels in the same frame format, so one parser
+  handles everything and every byte is CRC-checked.
+- Command ids and payload structs live in one header shared with the Python
+  host library (generated, not hand-copied).
+- `docs/protocol.md` documents every command.
 
-RX and TX are mutually exclusive on the hardware; the library switches modes
-internally and reports the switch time in `esp_sdr_caps()`.
+## 7. Bugs and debt to fix
 
-## 6. Region / legal model
-
-- Boot state `UNSET`: every TX call returns `ESP_ERR_INVALID_STATE`; RX and scan
-  are always allowed.
-- First TX after a region is set logs a one-time warning that the user is
-  responsible for local radio law.
-- Each region maps to a band table with a power cap; TX requests outside it return
-  `ESP_ERR_NOT_ALLOWED`. `REGION_USER` lets the user supply their own table.
-- The effective TX range is (region bands) ∩ (frequencies verified for TX on S3).
-- The legal note in `docs/` frames protocol support around the user's own
-  equipment.
-
-## 7. TX engine
-
-- **Tuning:** LO set via the existing `s3_tune()` path to the channel centre; the
-  tone field carries only the modulation (no ±10 MHz offset trick).
-- **GFSK:** `gfsk_shape.c` precomputes per-sample frequency words from bits with a
-  Gaussian filter (BT 0.5, 4 samples/bit) quantised to the 39 kHz fine grid
-  (`0x60006040[9:0]` + `0x60006050[1:0]`); falls back to plain FSK at 156 kHz
-  resolution if the fine bits do not behave.
-- **Player:** IRAM function, interrupts masked, cycle-counted against
-  `esp_cpu_get_cycle_count()` at 240 MHz; words in a heap buffer (static BSS
-  crosses the RF ring guard). Max burst length bounded so interrupts stay masked
-  ≤ 2 ms.
-- **Rates:** 250 kbps, 1 Mbps, 2 Mbps.
-
-## 8. Protocol framers
-
-| Framer | Air format | Reference vectors |
+| # | Issue | Fix |
 |---|---|---|
-| `ble_adv` | preamble, AA 0x8E89BED6, PDU, CRC-24 (init 0x555555), whitening | Ubertooth `btle_calc_crc`; spike-verified packet |
-| `nrf24_esb` (+BK2423) | preamble, 3–5 B address, 9-bit PCF, payload, CRC-8/16, MSB first | nRF24L01+ datasheet §7.3 |
-| `xn297` | nRF24 layout + XN297 scrambling and bit-reversal rules | DIY-Multiprotocol-TX-Module `XN297_EMU` |
-| `lt8900` | preamble, sync words, trailer, length, payload, CRC-16 | LT8900 datasheet; Multiprotocol `LT8900_SPI` |
+| 1 | `firmware-targets.json` missing → `build_firmware.py` and CI fail | replaced by `tools/build.py` with S3 profile inline |
+| 2 | Code requires IDF ≥ 5.4 APIs; installed IDF is 5.3.5 | version-checked HAL helpers, no force-included header |
+| 3 | SPEC worker processes only ~11–22 % of blocks at 40 Msps; advertised profiles overstate it | profile measured, root-caused, table regenerated from measurements |
+| 4 | RX I/Q spectrally mirrored | corrected once in HAL; verified with a known tone |
+| 5 | Advertised tuning range 100–6000 MHz is not real | range = verified 1840–2790 MHz |
+| 6 | Static buffers can collide with the RF ring guard | explicit memory map in one place; guard kept |
+| 7 | 3 ms fixed settle in RX prepare | measured minimum, made a named constant |
+| 8 | Further defects found during the line-by-line audit | logged in `docs/refactor-log.md`, each with a test |
 
-## 9. Spectrum scan
+## 8. "Not breaking it" — verification gates
 
-Steps the LO across 1840–2790 MHz (default 4 MHz step under 16 Msps so windows
-overlap), runs the existing SPEC FFT per step, de-mirrors I/Q, stitches bins and
-reports `(freq_hz, power_db)` through the callback. Serial firmware exposes it
-as `SCAN <from> <to> <step>`.
+1. **Baseline first.** Before any change, the current firmware is measured with a
+   recorded suite (§9) and results committed to `tests/hw/baseline.json`.
+2. **Incremental.** The rewrite proceeds module by module; after every step the
+   firmware builds and the hardware suite passes. No big-bang switch.
+3. **Equal or better.** Each metric must match or beat the baseline (CRC-exact
+   data paths, zero drops where baseline had zero, timings ≤ baseline + 2 %).
+4. **Rollback point.** `main` is untouched; every green step is a commit.
 
-## 10. Serial firmware
+## 9. Test suite
 
-Keeps today's RX commands unchanged (browser compatibility) and adds `REGION`,
-`TXTONE`, `TXGFSK`, `TXBLE`, `TXNRF`, `TXXN297`, `TXLT8900`, `SCAN`, `CAPS`
-(lists TX caps). Unknown commands still return `ERR command`.
-
-## 11. Testing
-
-| Layer | Test | Runs |
+| Layer | Content | Runs |
 |---|---|---|
-| Framers | CRC/whitening/scrambling vs reference vectors | host gcc, CI |
-| GFSK shape | Word sequence for known bits; deviation within ±1 step | host gcc, CI |
-| Region | UNSET blocks TX; out-of-band rejected; USER table honoured | host gcc, CI |
-| RX regression | `tests/hw/s3_smoke.py` ALL PASS | 1 board |
-| GFSK on air | Stock NimBLE scanner receives `TXBLE` (≥ 20 % on one channel) | 2 boards |
-| Protocols on air | Python decoders verify nRF24/XN297/LT8900 address + CRC | 2 boards |
-| Scan | Finds a TX tone placed at a known frequency within one step | 2 boards |
+| Host C | IQ pack/unpack, FIR, spectrum math, frame encode/decode + CRC, LO plan, gain tables | host gcc, CI |
+| Host Python | protocol client encode/decode | CI |
+| HW parity | every row of §3 exercised; CRC-verified data | 1 board |
+| HW RF | 2-board known-tone test: frequency accuracy, mirroring, gain steps | 2 boards (one transmits a tone via spike firmware until Phase 2) |
+| HW perf | capture duration per rate, ring drops at 16/40/80 Msps, SPEC processed %, IQ stream rate, USB throughput | 1 board |
 
-Hardware tests stay outside `unittest discover`; CI runs host tests only.
-
-## 12. Risks
+## 10. Risks
 
 | Risk | Mitigation |
 |---|---|
-| ESP-IDF / libphy update breaks undocumented calls | All such code in `src/hal/esp32s3/`; pinned IDF; hardware tests per release |
-| Fine-frequency bits don't work | Plain-FSK fallback; nRF24 at ±156 kHz tested by SDR decoder |
-| Frames correct on SDR but rejected by real clone chips | Documented as unverified on real chips; BLE scanner remains independent proof |
-| Interrupts masked during TX starve USB | Burst cap ≤ 2 ms; command acks only after burst ends |
+| Rewrite changes timing-critical code and introduces drops | Baseline + perf gate after every module; asm untouched unless measured |
+| Undocumented behaviour lost while renaming | Provenance comment per magic value; parity suite covers every capability |
+| IDF/libphy updates break HAL | All such code in `src/hal/`; pinned IDF in CI |
+
+## 11. Out of scope
+
+Other chips, browser app, CC1101/sub-GHz, Arduino packaging, Phase 2 features.
+
+## 12. Phase 2 summary (separate spec after Phase 1 lands)
+
+Built on the Phase 1 library, using facts proven on hardware on 2026-10-12:
+
+- TX: tone generator `0x60006040[9:0]` (156 kHz/LSB, fine bits `0x60006050[1:0]`),
+  `txcal_debuge_mode`/`start_tx_tone_step` inside the RX firmware, ~4 ms TX→RX
+  switch; CPU-timed GFSK at 250 k / 1 M / 2 Mbps; stock BLE scanner accepted
+  hand-built adverts (+dev polarity).
+- Framers: BLE adv, nRF24 ESB (+BK2423), XN297, LT8900.
+- Region chosen at init with a one-time legal warning; user-defined bands allowed.
+- Full-band scan 1840–2790 MHz.
+
+## Appendix A — files rewritten
+
+`main/targets/esp32s3/{receiver.c, s3_core1.S, s3_unpack.S, s3_fft_rnd.S,
+s3_firdot.S, linker.lf, sram_guard.ld}`, `main/common/{ring_capture.c/.h,
+burst_serial.c/.h, burst_gpio.c/.h, burst_version.c/.h, rx_recalibration.c/.h,
+rx_calibration_state.c, rx_calibration_link.cmake, spectrum_stats.c/.h,
+spectrum.h, spectrum_dc.h, ring_io.h, burst_gain.h, burst_limits.h, rx_lo.h,
+rx_tuning.h, rx_bandwidth.h}`, `main/diagnostics/filter_probe.h` (deleted),
+`main/CMakeLists.txt`, `main/Kconfig.projbuild`, `CMakeLists.txt`,
+`sdkconfig.defaults(.esp32s3)`, `partitions.csv`, `tools/*`, `tests/*`,
+`.github/workflows/firmware.yml`.
