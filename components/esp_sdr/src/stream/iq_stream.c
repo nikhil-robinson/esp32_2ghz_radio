@@ -298,8 +298,14 @@ bool iq_stream_begin(uint32_t *detail)
     while ((1u << log2d) < d) {
         log2d++;
     }
-    if (d < 64u || d > 1024u || (1u << log2d) != d || (c->iq_bits != 4 && c->iq_bits != 8 && c->iq_bits != 16) ||
-        c->iq_shift > 24) {
+    if (c->rate != ESP_SDR_RATE_16M) {
+        /* Core 1 filters ~12-20 Msps of input; 40/80 Msps would silently lose most
+         * units. Their extra bandwidth cannot cross the host link anyway. */
+        *detail = 5;
+        return false;
+    }
+    if (d < ESP_SDR_IQ_MIN_DECIMATION || d > ESP_SDR_IQ_MAX_DECIMATION || (1u << log2d) != d ||
+        (c->iq_bits != 4 && c->iq_bits != 8 && c->iq_bits != 16) || c->iq_shift > 24) {
         *detail = 2;
         return false;
     }

@@ -20,10 +20,11 @@ bool spectrum_valid_nfft(uint32_t nfft);
 void spectrum_set_dc_mode(uint8_t mode);
 
 /* Average power spectrum of `blocks` consecutive nfft-sample blocks of linear
- * raw words (Hann window, int16 FFT), in corrected natural bin order:
+ * raw words (Hann window, int16 FFT), in corrected natural bin order (peak:
+ * per-bin maximum over the blocks instead of the mean):
  * power[k] is k * fs / nfft above the LO for k < nfft / 2. Not for use while a
  * stream runs (shares the FFT buffers). */
-bool spectrum_burst_power(const uint32_t *words, uint32_t nfft, uint32_t blocks, float *power);
+bool spectrum_burst_power(const uint32_t *words, uint32_t nfft, uint32_t blocks, bool peak, float *power);
 
 /* Run setup (outside the masked section is fine). Seeds result->work_max.
  * Returns the measured cycles of one core-0 block (unpack + FFT). */

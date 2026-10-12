@@ -180,7 +180,7 @@ typedef struct __attribute__((packed)) {
 } msg_spectrum_t;
 _Static_assert(sizeof(msg_spectrum_t) == 12, "SPECTRUM layout");
 
-/** Decimated IQ stream; IQ_FRAME then RUN_DONE. shift 255 = automatic. */
+/** Decimated IQ stream from 16 Msps input (rate 2 only), decimation 32..1024; IQ_FRAME then RUN_DONE. shift 255 = automatic. */
 typedef struct __attribute__((packed)) {
     uint8_t rate;
     uint8_t bits;
@@ -192,7 +192,7 @@ typedef struct __attribute__((packed)) {
 } msg_iq_stream_t;
 _Static_assert(sizeof(msg_iq_stream_t) == 12, "IQ_STREAM layout");
 
-/** Full-band scan; SCAN_SEGMENT frames then RUN_DONE. sweeps 0 = until STOP; gain 255 = AGC. */
+/** Full-band scan; SCAN_SEGMENT frames then RUN_DONE. sweeps 0 = until STOP; gain 255 = AGC; detector 0 mean / 1 peak; flags bit0 flatten, bit1 suppress clock spurs. */
 typedef struct __attribute__((packed)) {
     uint16_t from_mhz;
     uint16_t to_mhz;
@@ -200,10 +200,13 @@ typedef struct __attribute__((packed)) {
     uint8_t averages;
     uint16_t nfft;
     uint8_t gain;
-    uint8_t reserved;
+    uint8_t detector;
     uint16_t sweeps;
+    uint8_t dwell;
+    uint8_t flags;
+    uint16_t reserved;
 } msg_scan_t;
-_Static_assert(sizeof(msg_scan_t) == 12, "SCAN layout");
+_Static_assert(sizeof(msg_scan_t) == 16, "SCAN layout");
 
 /** Drive or float a free GPIO. */
 typedef struct __attribute__((packed)) {
@@ -304,7 +307,7 @@ typedef struct __attribute__((packed)) {
     uint8_t gain;
     uint8_t ffts;
     uint8_t db_step;
-    uint8_t reserved;
+    uint8_t spurs;
     uint32_t elapsed_us;
 } msg_scan_segment_t;
 _Static_assert(sizeof(msg_scan_segment_t) == 28, "SCAN_SEGMENT layout");

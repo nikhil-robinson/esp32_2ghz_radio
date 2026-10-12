@@ -188,14 +188,18 @@ class Device:
         return decode_iq32(np.frombuffer(data, '<u4')), info
 
     def scan(self, from_mhz: int = 1842, to_mhz: int = 2790, rate: int = 1, nfft: int = 1024, averages: int = 8,
-             gain: int | None = 40) -> tuple[np.ndarray, np.ndarray, dict]:
+             gain: int | None = 40, peak: bool = False, dwell: int = 1, flatten: bool = True,
+             suppress_spurs: bool = True) -> tuple[np.ndarray, np.ndarray, dict]:
         """One full-band sweep. Returns (frequency Hz, power dB rel. full scale, run result).
 
         rate 0/1/2 = 80/40/16 Msps captures (32/16/6 MHz per step); gain None = AGC
-        (levels then differ between steps)."""
+        (levels then differ between steps). peak: max-hold detector for bursty
+        signals; dwell: captures per step; flatten: remove in-step filter ripple;
+        suppress_spurs: interpolate over the receiver's own n x 8 MHz harmonics."""
         freqs, levels = [], []
         for f in self.stream('SCAN', timeout=120.0, from_mhz=from_mhz, to_mhz=to_mhz, rate=rate, nfft=nfft,
-                             averages=averages, gain=255 if gain is None else gain, sweeps=1):
+                             averages=averages, gain=255 if gain is None else gain, sweeps=1,
+                             detector=int(peak), dwell=dwell, flags=int(flatten) | int(suppress_spurs) << 1):
             if f.message.name != 'SCAN_SEGMENT':
                 continue
             v = f.fields()

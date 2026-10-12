@@ -206,11 +206,20 @@ with Device(PORT) as dev:
         samples = sum(fr.fields()['samples'] for fr in iqf)
         check(f'IQ stream dec {dec}: delivered >= baseline', d['status'] == 0 and d['frames'] >= b['frames'] * 0.9,
               f"frames={d['frames']} drops={d['drops']} (base {b['frames']}/{b['drops']}) samples={samples}")
+    for dec, bits in ((32, 4), (128, 16)):
+        frames, d = run(dev, 'IQ_STREAM', rate=2, decimation=dec, bits=bits, shift=255, duration_ms=2000)
+        check(f'IQ stream dec {dec} {bits}-bit gap-free', d['status'] == 0 and d['drops'] == 0 and d['lost_pairs'] == 0,
+              f"frames={d['frames']}")
     _, d = run(dev, 'IQ_STREAM', rate=2, decimation=100, bits=8, shift=255, duration_ms=200)
     check('IQ stream rejects decimation 100', d['status'] == p.RUN_STATUS['RUN_FAIL_ARG'])
+    check('IQ stream rejects 40 Msps input', expect_error_run(dev, 'IQ_STREAM', rate=1, decimation=64, bits=8,
+                                                               shift=255, duration_ms=200))
+    check('IQ stream rejects more than the link carries', expect_error_run(dev, 'IQ_STREAM', rate=2, decimation=32,
+                                                                           bits=8, shift=255, duration_ms=200))
 
     # ---- full-band scan --------------------------------------------------------
     for rate, start, budget_s in ((1, 1842, 3.0), (0, 1844, 2.0)):
+        dev.scan(start, 2790, rate=rate)  # first sweep of a configuration also learns the flatness shape
         t = time.time()
         f, db, r = dev.scan(start, 2790, rate=rate)
         dt = time.time() - t
@@ -218,6 +227,18 @@ with Device(PORT) as dev:
         check(f'scan {start}-2790 MHz rate {rate}: contiguous, in time', r['error'] == 0 and f[0] >= start * 1e6 and
               f[-1] <= 2790e6 and steps.max() < 2 * np.median(steps) and dt < budget_s,
               f'{len(f)} bins, {dt:.1f} s')
+    f, raw, _ = dev.scan(1841, 2790, rate=2, averages=16, flatten=False, suppress_spurs=False)
+    f, fixed, _ = dev.scan(1841, 2790, rate=2, averages=16)
+    def grid_spurs(db):
+        med = np.convolve(db, np.ones(129) / 129, 'same')
+        pk = [i for i in range(2, len(db) - 2) if db[i] - med[i] > 10 and db[i] == db[i - 2:i + 3].max()]
+        mhz = f[pk] / 1e6
+        return int(np.sum(np.abs(((mhz + 4) % 8) - 4) < 0.05))
+    def ripple(db):
+        k = ((((f / 1e6 - 1841) % 6) / 6) * 32).astype(int)
+        return np.ptp([np.median(db[k == i]) for i in range(32)])
+    check('scan flatten: in-step ripple <= 1.5 dB', ripple(fixed) <= 1.5, f'{ripple(raw):.1f} -> {ripple(fixed):.1f} dB')
+    check('scan spur suppression: no clock spurs left', grid_spurs(fixed) == 0, f'{grid_spurs(raw)} -> {grid_spurs(fixed)}')
     check('scan rejects LO below range', expect_error_run(dev, 'SCAN', from_mhz=1840, to_mhz=1900, rate=1, nfft=1024,
                                                          averages=4, gain=40, sweeps=1))
 

@@ -32,6 +32,10 @@ extern "C" {
 #define ESP_SDR_RING_BANKS 3u
 #define ESP_SDR_RING_PAIRS 16384u
 #define ESP_SDR_RING_THRESHOLD 12288u
+/** IQ stream: 16 Msps input only, decimation 32..1024 (power of two). Gap-free output is
+ *  bounded by the ~800 KB/s USB-Serial-JTAG link: 500 kS/s at 4 bits, 250 kS/s at 8, 125 kS/s at 16. */
+#define ESP_SDR_IQ_MIN_DECIMATION 32u
+#define ESP_SDR_IQ_MAX_DECIMATION 1024u
 /** Approximate two-sided baseband bandwidth range of the S3 filter, MHz. */
 #define ESP_SDR_MIN_BANDWIDTH_MHZ 13u
 #define ESP_SDR_MAX_BANDWIDTH_MHZ 69u
@@ -115,7 +119,7 @@ typedef enum {
 
 typedef enum {
     ESP_SDR_RUN_OK = 0,
-    ESP_SDR_RUN_FAIL_ARG,     /**< invalid configuration (detail: which check) */
+    ESP_SDR_RUN_FAIL_ARG,     /**< invalid configuration (detail: which check; IQ: 2 args, 3/4 memory, 5 rate) */
     ESP_SDR_RUN_FAIL_LATE,    /**< bank switched too late (detail: pairs written) */
     ESP_SDR_RUN_FAIL_AGE,     /**< bank older than the ring allows (detail: cycles) */
     ESP_SDR_RUN_FAIL_START,   /**< unit did not start where the previous ended */
@@ -132,7 +136,7 @@ typedef struct {
     uint16_t nfft;          /**< SPECTRUM */
     bool max_hold;          /**< SPECTRUM: per-bin maximum instead of mean */
     bool stats;             /**< SPECTRUM: emit STATS frames */
-    uint16_t iq_decimation; /**< IQ: 64..1024, power of two */
+    uint16_t iq_decimation; /**< IQ: 32..1024, power of two; rate must be ESP_SDR_RATE_16M */
     uint8_t iq_bits;        /**< IQ: 4, 8 or 16 */
     uint8_t iq_shift;       /**< IQ: rounding right shift of the 15-bit FIR output, 0..24 */
     bool iq_rotate;         /**< IQ: shift by +fs/4 before filtering (LO tuned fs/4 below) */
@@ -189,6 +193,11 @@ void esp_sdr_run_unit(const esp_sdr_run_result_t *result, unsigned u,
 
 #define ESP_SDR_SCAN_GAIN_AGC 255u
 
+typedef enum {
+    ESP_SDR_DETECTOR_MEAN = 0,  /**< average power: noise floor, steady signals */
+    ESP_SDR_DETECTOR_PEAK = 1,  /**< per-bin maximum: catches short bursts (Wi-Fi, BLE) */
+} esp_sdr_detector_t;
+
 typedef struct {
     uint32_t from_mhz;      /**< >= ESP_SDR_MIN_MHZ + offset (1/2/4 MHz at 16/40/80 Msps) */
     uint32_t to_mhz;        /**< last step's LO must be <= ESP_SDR_MAX_MHZ */
@@ -196,6 +205,10 @@ typedef struct {
     uint16_t nfft;          /**< 256..2048: resolution = rate / nfft */
     uint8_t averages;       /**< FFTs averaged per step (capped by 16380 / nfft) */
     uint8_t gain_index;     /**< fixed gain for comparable steps; ESP_SDR_SCAN_GAIN_AGC = hardware AGC */
+    esp_sdr_detector_t detector;
+    uint8_t dwell;          /**< captures per step (>= 1); more dwell catches more bursts */
+    bool flatten;           /**< remove the in-step filter ripple (self-calibrated from the noise floor) */
+    bool suppress_spurs;    /**< interpolate over the receiver's own n x 8 MHz clock harmonics */
 } esp_sdr_scan_config_t;
 
 typedef struct {
@@ -206,7 +219,8 @@ typedef struct {
     uint32_t bin_millihz;   /**< spacing of codes, mHz */
     uint16_t bins;
     uint8_t gain_index;
-    uint8_t ffts;           /**< FFTs averaged */
+    uint8_t ffts;           /**< FFTs per capture */
+    uint8_t spurs;          /**< bins interpolated over (suppress_spurs) */
     uint32_t elapsed_us;    /**< time spent on this step */
     const uint8_t *codes;   /**< 0.5 dB codes relative to full scale, ascending frequency */
 } esp_sdr_scan_segment_t;

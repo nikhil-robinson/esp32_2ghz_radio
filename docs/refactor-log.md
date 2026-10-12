@@ -49,9 +49,26 @@ the baseline (61.1 % vs 60.6 % at 16M/256).
   or 4.3 s (16 Msps, 15.6 kHz). Each step keeps the slice above the LO clear of
   DC and filter edges; fixed gain makes steps comparable. Stitched sweeps place
   the crystal harmonics within one fifth of a bin.
-  Known limits: a few dB of in-step ripple (analog filter shape, uncalibrated);
-  internal 40 MHz / 16 MHz harmonics appear as narrow spurs; bursty signals
-  (Wi-Fi, BLE) appear only in the step captured during a burst.
+* **Scan gaps closed** (2026-10-13):
+  - *In-step ripple*: the response is learned from the sweep's own noise floor
+    (per FFT bin, median-referenced, signals excluded), cached per rate / nfft /
+    gain / filter: 6.0 -> 1.0 dB p-p at 40 Msps, 2.0 -> 1.0 dB at 16 Msps.
+  - *Clock spurs*: 97 % of the receiver's own narrow lines sit on n x 8 MHz (gcd of
+    the 40 MHz crystal and the 16 MHz sample clock); narrow peaks there are
+    interpolated from their neighbours: 46 -> 0 spurs per sweep, real signals off
+    the grid untouched.
+  - *Bursty signals*: peak detector and dwell (captures per step). 2.4 GHz bins
+    showing a burst per sweep: mean 3.8 %, peak 7.6 %, peak + dwell 4 11.8 %,
+    peak + dwell 16 23.9 %.
+* **IQ stream gaps closed**: profiling showed ~12 cycles per input sample on core 1
+  (unpack 3, stage-1 FIR 4.2, stage-2 2.8, packing 1.4), so 40/80 Msps input
+  could never keep up (legacy firmware silently lost 50-80 %). The output must
+  also cross the ~800 KB/s USB-Serial-JTAG link (measured; the device pump is not
+  the limit). IQ streams therefore take 16 Msps input, decimation 32..1024, and
+  the firmware refuses rates above the link: 500 kS/s 4-bit, 250 kS/s 8-bit and
+  125 kS/s 16-bit run with zero drops and zero lost samples.
+* **Static memory headroom**: the mirroring table (4 KB) was replaced by an
+  index expression; `.bss` ends 3.9 KB below the dump banks.
 
 ## Removed
 

@@ -5,7 +5,8 @@
 #include <string.h>
 #include "stream.h"
 
-#define SINK_CHUNK 64u  /* bounded work per pump between ring polls */
+#define SINK_CHUNK 64u           /* one USB full-speed packet */
+#define SINK_CHUNKS_PER_PUMP 4u  /* bounded work per pump between ring polls */
 _Static_assert((TX_QUEUE_SIZE & (TX_QUEUE_SIZE - 1u)) == 0, "queue size must be a power of two");
 
 static uint8_t queue[TX_QUEUE_SIZE];
@@ -51,23 +52,31 @@ STREAM_HOT bool tx_queue_push_from_worker(const void *data, uint32_t size)
 
 STREAM_HOT void tx_queue_pump(void)
 {
-    uint32_t used = head - tail;
-    if (!used) {
-        return;
-    }
-    uint32_t offset = tail & (TX_QUEUE_SIZE - 1u), n = TX_QUEUE_SIZE - offset;
-    if (n > used) {
-        n = used;
-    }
-    if (n > SINK_CHUNK) {
-        n = SINK_CHUNK;
-    }
     const esp_sdr_sink_t *sink = g_stream.sink;
-    if (!sink || !sink->write) {
-        tail += n;  /* no sink: discard */
-        return;
+    /* Several chunks while the sink keeps accepting them; bounded so a ring
+     * poll is never delayed by more than SINK_CHUNKS_PER_PUMP chunks. */
+    for (unsigned chunk = 0; chunk < SINK_CHUNKS_PER_PUMP; chunk++) {
+        uint32_t used = head - tail;
+        if (!used) {
+            return;
+        }
+        uint32_t offset = tail & (TX_QUEUE_SIZE - 1u), n = TX_QUEUE_SIZE - offset;
+        if (n > used) {
+            n = used;
+        }
+        if (n > SINK_CHUNK) {
+            n = SINK_CHUNK;
+        }
+        if (!sink || !sink->write) {
+            tail += n;  /* no sink: discard */
+            continue;
+        }
+        uint32_t taken = (uint32_t)sink->write(sink->ctx, queue + offset, n);
+        tail += taken;
+        if (taken < n) {
+            return;  /* sink full: back to the ring */
+        }
     }
-    tail += (uint32_t)sink->write(sink->ctx, queue + offset, n);
 }
 
 STREAM_HOT bool tx_queue_empty(void)

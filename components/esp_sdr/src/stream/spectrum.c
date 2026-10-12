@@ -44,12 +44,15 @@ static int16_t fft_buffer[2 * ESP_SDR_MAX_NFFT] __attribute__((aligned(16)));
 static float accumulators[2][ESP_SDR_MAX_NFFT];
 static float *accumulator = accumulators[0];
 static uint16_t natural_bin[ESP_SDR_MAX_NFFT];  /* FFT slot <-> natural bin (involution) */
+static unsigned nfft, nfft_log2;
 /* The FFT runs on raw samples, whose spectrum is mirrored (raw Q inverted):
  * output bin k is read from the slot of raw bin (N - k) mod N. */
-static uint16_t slot_of_bin[ESP_SDR_MAX_NFFT];
+static inline unsigned slot_of_bin(unsigned k)
+{
+    return natural_bin[(nfft - k) & (nfft - 1)];
+}
 static uint8_t frame_out[FRAME_BINS_AT + ESP_SDR_MAX_NFFT + ESP_SDR_RECORD_CRC_SIZE];
 static int16_t *assist_buffer;  /* heap: BSS must end below the RF ring */
-static unsigned nfft, nfft_log2;
 static bool fft_ready;
 
 static uint8_t dc_mode = 1;
@@ -161,9 +164,6 @@ static void prepare_tables(unsigned n)
             reversed |= ((i >> bit) & 1u) << (log2n - 1 - bit);
         }
         natural_bin[i] = (uint16_t)reversed;
-    }
-    for (unsigned k = 0; k < n; k++) {
-        slot_of_bin[k] = natural_bin[(n - k) & (n - 1)];
     }
     nfft = n;
     nfft_log2 = log2n;
@@ -388,7 +388,7 @@ STREAM_HOT static void emit_chunk(void)
     uint32_t *stored = (uint32_t *)accumulator;
     const bool max_hold = g_stream.config->max_hold;
     for (unsigned k = run.emit_position; k < end; k++) {
-        unsigned slot = slot_of_bin[k];
+        unsigned slot = slot_of_bin(k);
         bins[k] = db_code(power_bits(stored[slot], max_hold), run.emit_offset_q4);
         stored[slot] = 0;
     }
@@ -792,7 +792,7 @@ uint32_t spectrum_begin(bool dual, bool assist)
 
 /* ---- one-shot (scan) ---------------------------------------------------- */
 
-bool spectrum_burst_power(const uint32_t *words, uint32_t n, uint32_t blocks, float *power)
+bool spectrum_burst_power(const uint32_t *words, uint32_t n, uint32_t blocks, bool peak, float *power)
 {
     if (!spectrum_init() || !spectrum_valid_nfft(n) || blocks * n > DUMP_RING_PAIRS) {
         return false;
@@ -805,11 +805,16 @@ bool spectrum_burst_power(const uint32_t *words, uint32_t n, uint32_t blocks, fl
         unpack(fft_buffer, words, b * n, 0, n);
         fft_sc16_rounded(fft_buffer, (int)n, dsps_fft_w_table_sc16);
         for (uint32_t k = 0; k < n; k++) {
-            const int16_t *x = fft_buffer + 2 * slot_of_bin[k];
-            power[k] += (float)((uint32_t)(x[0] * x[0]) + (uint32_t)(x[1] * x[1]));
+            const int16_t *x = fft_buffer + 2 * slot_of_bin(k);
+            float p = (float)((uint32_t)(x[0] * x[0]) + (uint32_t)(x[1] * x[1]));
+            if (!peak) {
+                power[k] += p;
+            } else if (p > power[k]) {
+                power[k] = p;
+            }
         }
     }
-    const float scale = 1.0f / (float)blocks;
+    const float scale = peak ? 1.0f : 1.0f / (float)blocks;
     for (uint32_t k = 0; k < n; k++) {
         power[k] *= scale;
     }

@@ -69,8 +69,8 @@ FreeRTOS, interrupt watchdog off, 240 MHz).
 | Burst capture | 256–16 380 samples at 80 / 40 / 16 Msps; IQ32, packed IQ10 or IQ8 |
 | Continuous | gapless, sentinel-verified ring at 80 / 40 / 16 Msps |
 | Spectrum | 256–2048-point FFT, mean or max-hold, both cores |
-| Full-band scan | 1842–2790 MHz in 0.9 s (78 kHz bins), 1.6 s (39 kHz) or 4.3 s (15.6 kHz) |
-| I/Q stream | decimation 64–1024, 4/8/16-bit, optional fs/4 shift |
+| Full-band scan | 1842–2790 MHz in 0.9 s (78 kHz bins), 1.6 s (39 kHz) or 4.3 s (15.6 kHz); flat (±0.5 dB in-step), clock spurs removed, mean or peak detector with dwell |
+| I/Q stream | 16 Msps input, decimation 32–1024; gap-free up to the link: 500 kS/s (4-bit), 250 kS/s (8-bit), 125 kS/s (16-bit) |
 | Bandwidth | baseband filter ≈ 13–69 MHz |
 
 ## Repository

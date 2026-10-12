@@ -22,6 +22,8 @@
 #define MAX_UART_BAUD 3000000u
 #define IQ_AUTO_SHIFT 255u
 #define FIR_OUTPUT_BITS 15u
+/* Measured USB-Serial-JTAG ceiling is ~800 KB/s; keep IQ streams gap-free below it. */
+#define LINK_STREAM_BYTES_PER_S 720000u
 
 typedef struct {
     uint8_t seq;
@@ -266,9 +268,16 @@ static void iq_stream(reply_to_t to, const msg_iq_stream_t *q)
         run_done(to, NULL, WIRE_ERR_UNSUPPORTED);
         return;
     }
-    if (q->rate > ESP_SDR_RATE_16M || q->rotate > 1 || !valid_duration(q->duration_ms)) {
-        run_done(to, NULL, WIRE_ERR_BAD_ARGUMENT);
+    if (q->rate != ESP_SDR_RATE_16M || q->rotate > 1 || !valid_duration(q->duration_ms)) {
+        run_done(to, NULL, WIRE_ERR_BAD_ARGUMENT);  /* IQ streams take 16 Msps input only */
         return;
+    }
+    if (q->decimation && q->bits) {
+        uint32_t bytes_per_pair = q->bits == 16 ? 4u : q->bits == 8 ? 2u : 1u;
+        if (16000000u / q->decimation * bytes_per_pair > LINK_STREAM_BYTES_PER_S) {
+            run_done(to, NULL, WIRE_ERR_UNSUPPORTED);  /* more than the link can carry */
+            return;
+        }
     }
     /* Default shift scales the 15-bit FIR output to the requested width. */
     uint8_t shift = q->shift != IQ_AUTO_SHIFT ? q->shift : q->bits < FIR_OUTPUT_BITS ? FIR_OUTPUT_BITS - q->bits : 0;
@@ -292,6 +301,7 @@ static bool send_segment(const esp_sdr_scan_segment_t *seg, void *ctx)
         .sweep = s->sweep, .step = (uint16_t)seg->step, .steps = (uint16_t)seg->steps,
         .lo_mhz = (uint16_t)seg->lo_mhz, .bins = seg->bins, .start_hz = seg->start_hz,
         .bin_millihz = seg->bin_millihz, .gain = seg->gain_index, .ffts = seg->ffts, .db_step = 2,
+        .spurs = seg->spurs,
         .elapsed_us = seg->elapsed_us,
     };
     return link_send_frame_split(RSP_SCAN_SEGMENT, s->to.seq, &m, sizeof(m), seg->codes, seg->bins) &&
@@ -300,12 +310,14 @@ static bool send_segment(const esp_sdr_scan_segment_t *seg, void *ctx)
 
 static void scan(reply_to_t to, const msg_scan_t *q)
 {
-    if (q->rate > ESP_SDR_RATE_16M || !q->averages) {
+    if (q->rate > ESP_SDR_RATE_16M || !q->averages || q->detector > 1 || q->flags > 3) {
         run_done(to, NULL, WIRE_ERR_BAD_ARGUMENT);
         return;
     }
     const esp_sdr_scan_config_t c = {.from_mhz = q->from_mhz, .to_mhz = q->to_mhz, .rate = (esp_sdr_rate_t)q->rate,
-                                     .nfft = q->nfft, .averages = q->averages, .gain_index = q->gain};
+                                     .nfft = q->nfft, .averages = q->averages, .gain_index = q->gain,
+                                     .detector = (esp_sdr_detector_t)q->detector, .dwell = q->dwell ? q->dwell : 1,
+                                     .flatten = q->flags & 1, .suppress_spurs = (q->flags & 2) != 0};
     scan_context_t ctx = {.to = to};
     esp_err_t err = ESP_OK;
     bool stopped = false;

@@ -100,7 +100,7 @@ static void test_fir_design(void)
         CHECK(taps[i] == taps[FIR_STAGE1_TAPS - 1 - i] || i >= 16);  /* symmetric part */
     }
     CHECK(labs(sum - 32768) <= 16);  /* unity DC gain in Q15 */
-    for (unsigned d2 = 8; d2 <= 128; d2 *= 2) {
+    for (unsigned d2 = 4; d2 <= 128; d2 *= 2) {  /* decimation 32..1024 */
         uint32_t n = fir_stage2_taps(d2);
         CHECK(n % 8 == 0 && n <= FIR_STAGE2_MAX_TAPS);
         fir_design_lowpass(taps, n, d2);
