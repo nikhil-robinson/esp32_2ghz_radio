@@ -1,6 +1,6 @@
 # ESP-SDR S3 radio library — design
 
-Status: draft for review (rev 2) · Branch: `s3-radio-lib` · Date: 2026-10-12
+Status: approved (rev 3) · Branch: `s3-radio-lib` · Date: 2026-10-12
 
 ## 1. Goal and phases
 
@@ -27,7 +27,8 @@ Appendix A), the build system, Python tools and tests.
 - All non-S3 targets and families, S31 streaming + web UI, `platform/esp32s2/`,
   per-chip `sdkconfig.defaults.*`, `partitions-stream.csv`.
 - Web/browser tooling: `.github/workflows/rebuild-site.yml`,
-  `tools/export_web_firmware.py`, `tools/collect_firmware.py` and their tests.
+  `tools/export_web_firmware.py`, `tools/collect_firmware.py`,
+  `tools/build_firmware.py` (catalog / `firmware-targets.json` matrix) and their tests.
 - Experimental probe builds that are never packaged: `S3_RF_PROBE`,
   `SAMPLE_RATE_PROBE`, `FILTER_REGISTER_PROBE`, `RING_PROBE`,
   `main/diagnostics/`. (Their verified findings are kept as constants/comments.)
@@ -74,11 +75,11 @@ firmware/esp_sdr_fw/           main.c + command dispatcher, Kconfig, sdkconfig.d
 host/esp_sdr/                  Python host library (protocol client) used by tools + tests
 tests/host/                    pure-C unit tests (host gcc) + Python unit tests
 tests/hw/                      hardware parity + performance suite
-tools/                         build.py, version.py
+tools/                         version.py (build = plain `idf.py build`)
 docs/                          README, protocol.md, architecture.md
 ```
 
-Rules: files and functions are named for what they do (`ring_start_run`, not
+Rules: new file and function names throughout — nothing keeps its old name for its own sake; files and functions are named for what they do (`ring_start_run`, not
 `c1_encode_step`); one module, one responsibility; no file over ~600 lines.
 
 ## 5. Coding standards
@@ -94,8 +95,10 @@ Rules: files and functions are named for what they do (`ring_start_run`, not
 - **Warnings:** `-Wall -Wextra -Werror` on our code; `cppcheck` clean in CI.
 - **Hot paths:** IRAM placement, masked-interrupt windows and assembly kept where
   measured necessary; each documented with its timing budget.
-- **ESP-IDF:** build on 5.3.x with version checks replacing the force-included
-  compat header; CI builds against the pinned IDF.
+- **ESP-IDF:** supports **5.0 and newer**. Version differences (driver component
+  split in 5.3, USB-Serial-JTAG/`cpu_utility_ll` helpers in 5.4) are handled by
+  `ESP_IDF_VERSION` checks inside `src/hal/` and `src/transport/` only. CI builds
+  5.0, 5.1, 5.2, 5.3, 5.4 and latest 5.x; hardware tests run locally on 5.1 and 5.3.
 - **Python:** 3.10+, type hints, `ruff` clean.
 
 ## 6. Wire protocol (new)
@@ -118,8 +121,7 @@ Binary, framed, both directions:
 
 | # | Issue | Fix |
 |---|---|---|
-| 1 | `firmware-targets.json` missing → `build_firmware.py` and CI fail | replaced by `tools/build.py` with S3 profile inline |
-| 2 | Code requires IDF ≥ 5.4 APIs; installed IDF is 5.3.5 | version-checked HAL helpers, no force-included header |
+| 2 | Code requires IDF ≥ 5.4 APIs; must support ESP-IDF 5.0+ | version-checked HAL helpers and CMake `REQUIRES` (drivers split into `esp_driver_*` only in 5.3), no force-included header |
 | 3 | SPEC worker processes only ~11–22 % of blocks at 40 Msps; advertised profiles overstate it | profile measured, root-caused, table regenerated from measurements |
 | 4 | RX I/Q spectrally mirrored | corrected once in HAL; verified with a known tone |
 | 5 | Advertised tuning range 100–6000 MHz is not real | range = verified 1840–2790 MHz |
@@ -180,5 +182,5 @@ rx_calibration_state.c, rx_calibration_link.cmake, spectrum_stats.c/.h,
 spectrum.h, spectrum_dc.h, ring_io.h, burst_gain.h, burst_limits.h, rx_lo.h,
 rx_tuning.h, rx_bandwidth.h}`, `main/diagnostics/filter_probe.h` (deleted),
 `main/CMakeLists.txt`, `main/Kconfig.projbuild`, `CMakeLists.txt`,
-`sdkconfig.defaults(.esp32s3)`, `partitions.csv`, `tools/*`, `tests/*`,
+`sdkconfig.defaults(.esp32s3)`, `partitions.csv`, `tools/*` (build_firmware.py deleted), `tests/*`,
 `.github/workflows/firmware.yml`.
