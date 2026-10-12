@@ -7,6 +7,7 @@
 #include "esp_event.h"
 #include "esp_wifi.h"
 #include "iq_pack.h"
+#include "mode.h"
 #include "nvs_flash.h"
 #include "rf.h"
 #include "spectrum.h"
@@ -15,6 +16,19 @@
 
 #define TAG "esp_sdr"
 #define INIT_CHANNEL 1
+
+static esp_sdr_mode_t mode = ESP_SDR_MODE_RX;
+static bool initialised;
+
+esp_sdr_mode_t sdr_mode(void) { return initialised ? mode : (esp_sdr_mode_t)-1; }
+esp_sdr_mode_t esp_sdr_get_mode(void) { return mode; }
+
+#define RX_ONLY()                               \
+    do {                                        \
+        if (sdr_mode() != ESP_SDR_MODE_RX) {    \
+            return ESP_ERR_INVALID_STATE;       \
+        }                                       \
+    } while (0)
 
 uint32_t esp_sdr_rate_hz(esp_sdr_rate_t rate)
 {
@@ -51,10 +65,21 @@ static esp_err_t init_phy(void)
     return esp_wifi_set_channel(INIT_CHANNEL, WIFI_SECOND_CHAN_NONE);
 }
 
-esp_err_t esp_sdr_init(void)
+esp_err_t esp_sdr_init(esp_sdr_mode_t m)
 {
+    if (initialised) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (m != ESP_SDR_MODE_RX && m != ESP_SDR_MODE_TX) {
+        return ESP_ERR_INVALID_ARG;
+    }
     ESP_RETURN_ON_ERROR(init_nvs(), TAG, "nvs");
     ESP_RETURN_ON_ERROR(init_phy(), TAG, "phy");
+    mode = m;
+    initialised = true;
+    if (m == ESP_SDR_MODE_TX) {
+        return ESP_OK;  /* no receive path, no second core, no ring */
+    }
     rf_prepare_rx();
     if (spectrum_init()) {
         worker_start();  /* without core 1, streams run single-core */
@@ -64,6 +89,7 @@ esp_err_t esp_sdr_init(void)
 
 esp_err_t esp_sdr_set_frequency(uint32_t mhz)
 {
+    RX_ONLY();
     if (mhz < ESP_SDR_MIN_MHZ || mhz > ESP_SDR_MAX_MHZ) {
         return ESP_ERR_INVALID_ARG;
     }
@@ -72,10 +98,16 @@ esp_err_t esp_sdr_set_frequency(uint32_t mhz)
 }
 
 uint32_t esp_sdr_get_frequency(void) { return rf_frequency(); }
-void esp_sdr_set_pll_offset(int32_t khz) { rf_set_pll_offset(khz); }
+void esp_sdr_set_pll_offset(int32_t khz)
+{
+    if (sdr_mode() == ESP_SDR_MODE_RX) {
+        rf_set_pll_offset(khz);
+    }
+}
 
 esp_err_t esp_sdr_set_gain(bool manual, uint8_t index)
 {
+    RX_ONLY();
     if (manual && index > rf_gain_max()) {
         return ESP_ERR_INVALID_ARG;
     }
@@ -93,6 +125,7 @@ void esp_sdr_get_gain(esp_sdr_gain_t *gain)
 
 esp_err_t esp_sdr_set_filter(int code)
 {
+    RX_ONLY();
     if (code < -1 || code > 63) {
         return ESP_ERR_INVALID_ARG;
     }
@@ -102,6 +135,7 @@ esp_err_t esp_sdr_set_filter(int code)
 
 esp_err_t esp_sdr_set_bandwidth(uint32_t mhz)
 {
+    RX_ONLY();
     if (mhz && (mhz < ESP_SDR_MIN_BANDWIDTH_MHZ || mhz > ESP_SDR_MAX_BANDWIDTH_MHZ)) {
         return ESP_ERR_INVALID_ARG;
     }
@@ -117,6 +151,7 @@ void esp_sdr_get_filter(esp_sdr_filter_t *filter)
 
 esp_err_t esp_sdr_capture(esp_sdr_rate_t rate, uint32_t samples, const uint32_t **words, uint32_t *elapsed_us)
 {
+    RX_ONLY();
     if (rate > ESP_SDR_RATE_16M || samples < ESP_SDR_MIN_BURST_SAMPLES || samples > ESP_SDR_MAX_BURST_SAMPLES) {
         return ESP_ERR_INVALID_ARG;
     }
@@ -133,6 +168,10 @@ size_t esp_sdr_pack_iq8(uint32_t *words, uint32_t samples) { return iq_pack8(wor
 
 void esp_sdr_run(const esp_sdr_run_config_t *config, const esp_sdr_sink_t *sink, esp_sdr_run_result_t *result)
 {
+    if (sdr_mode() != ESP_SDR_MODE_RX) {
+        *result = (esp_sdr_run_result_t){.status = ESP_SDR_RUN_FAIL_ARG};
+        return;
+    }
     rf_prepare_rx();
     rf_filter_apply();
     stream_run(config, sink, result);

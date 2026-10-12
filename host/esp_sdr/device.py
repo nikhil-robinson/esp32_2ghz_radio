@@ -71,8 +71,20 @@ def decode_iq8(data: bytes) -> np.ndarray:
     return (v[0::2] - 1j * v[1::2]).astype(np.complex64)
 
 
+def _stable_port(port: str) -> str:
+    """The /dev/serial/by-id link for `port` (Linux), else `port` itself."""
+    import glob
+    import os
+    real = os.path.realpath(port)
+    for link in glob.glob('/dev/serial/by-id/*'):
+        if os.path.realpath(link) == real:
+            return link
+    return port
+
+
 class Device:
     def __init__(self, port: str, baud: int = 2_000_000, timeout: float = 5.0):
+        self.port, self.baud = port, baud
         self.serial = serial.Serial(port, baud, timeout=timeout)
         self.timeout = timeout
         self._seq = 0
@@ -98,10 +110,10 @@ class Device:
 
     # ---- framing ---------------------------------------------------------
 
-    def send(self, name: str, **fields) -> int:
+    def send(self, name: str, body: bytes = b'', **fields) -> int:
         m = p.BY_NAME[name]
         self._seq = (self._seq + 1) & 0xff
-        payload = m.pack(**{n: fields.get(n, 0) for n, _ in m.fields})
+        payload = m.pack(**{n: fields.get(n, 0) for n, _ in m.fields}) + body
         head = _HEADER.pack(p.MAGIC, m.id, self._seq, len(payload))
         crc = zlib.crc32(head[2:] + payload)
         self.serial.write(head + payload + struct.pack('<I', crc))
@@ -139,10 +151,11 @@ class Device:
             out += self.serial.read(n - len(out))
         return bytes(out)
 
-    def request(self, name: str, expect: str = 'ACK', **fields) -> dict:
-        seq = self.send(name, **fields)
+    def request(self, name: str, expect: str = 'ACK', body: bytes = b'', timeout: float | None = None,
+                **fields) -> dict:
+        seq = self.send(name, body, **fields)
         while True:
-            f = self.read_frame()
+            f = self.read_frame(timeout)
             if f.seq != seq:
                 continue
             if f.type == p.BY_NAME['ACK'].id and expect != 'ACK':
@@ -171,6 +184,80 @@ class Device:
 
     def gain(self) -> dict:
         return self.request('GET_GAIN', 'GAIN')
+
+    # ---- mode and transmitter ---------------------------------------------
+
+    def set_mode(self, tx: bool, wait: float = 10.0):
+        """Restart the board in transmit (True) or receive mode and reconnect."""
+        if self.info()['mode'] == int(tx):
+            return
+        self.port = _stable_port(self.port)  # the restart may re-enumerate under a new ttyACM number
+        self.request('SET_MODE', mode=int(tx))
+        self.serial.close()
+        deadline = time.monotonic() + wait
+        while True:
+            time.sleep(0.5)
+            try:
+                self.serial = serial.Serial(self.port, self.baud, timeout=self.timeout)
+                self.resync()
+                if self.info()['mode'] == int(tx):
+                    return
+            except (serial.SerialException, OSError, TimeoutError):
+                if time.monotonic() > deadline:
+                    raise
+
+    def tx_region(self, region: int):
+        """0 ISM (default), 1 HAM 2300-2450, 2 UNRESTRICTED 2210-2790 MHz."""
+        self.request('TX_REGION', region=region)
+
+    def tx_tone(self, khz: int, atten: int = 0):
+        self.request('TX_TONE', khz=khz, atten=atten)
+
+    def tx_off(self):
+        self.request('TX_OFF')
+
+    @staticmethod
+    def _tx_timeout(bits: int, bitrate: int, count: int, gap_us: int) -> float:
+        return 5.0 + count * (bits / bitrate + gap_us * 1e-6 + 20e-6) * 1.5
+
+    def send_tx(self, name: str, body: bytes, **fields) -> int:
+        """Start a transmit request without waiting; finish with wait_tx()."""
+        return self.send(name, body, **fields)
+
+    def wait_tx(self, seq: int, timeout: float):
+        while True:
+            f = self.read_frame(timeout)
+            if f.seq == seq and f.message.name == 'ACK':
+                if f.fields()['error']:
+                    raise DeviceError(f'transmit failed: error {f.fields()["error"]}')
+                return
+
+    def tx_bits(self, bits: list[int], center_khz: int, bitrate: int, deviation_hz: int, count: int = 1,
+                gap_us: int = 0, gaussian: bool = False, atten: int = 0, wait: bool = True) -> int:
+        packed = bytes(sum(bits[k + i] << (7 - i) for i in range(8) if k + i < len(bits))
+                       for k in range(0, len(bits), 8))
+        seq = self.send('TX_BITS', packed, center_khz=center_khz, bitrate=bitrate, deviation_hz=deviation_hz,
+                        gap_us=gap_us, count=count, nbits=len(bits), gaussian=int(gaussian), atten=atten)
+        if wait:
+            self.wait_tx(seq, self._tx_timeout(len(bits), bitrate, count, gap_us))
+        return seq
+
+    def tx_ble(self, channel: int, adv_addr: bytes, data: bytes, count: int = 1, gap_us: int = 0,
+               atten: int = 0, wait: bool = True) -> int:
+        seq = self.send('TX_BLE', data, gap_us=gap_us, count=count, channel=channel, atten=atten,
+                        **{f'adv{i}': adv_addr[i] for i in range(6)})
+        if wait:
+            self.wait_tx(seq, self._tx_timeout(8 * (16 + len(data)), 1_000_000, count, gap_us))
+        return seq
+
+    def tx_nrf24(self, channel: int, addr: bytes, payload: bytes, bitrate: int = 1_000_000, crc_len: int = 2,
+                 count: int = 1, gap_us: int = 0, atten: int = 0, wait: bool = True) -> int:
+        a = addr + bytes(5 - len(addr))
+        seq = self.send('TX_NRF24', payload, bitrate=bitrate, gap_us=gap_us, count=count, channel=channel,
+                        atten=atten, addr_len=len(addr), crc_len=crc_len, **{f'addr{i}': a[i] for i in range(5)})
+        if wait:
+            self.wait_tx(seq, self._tx_timeout(8 * (8 + len(payload)), bitrate, count, gap_us))
+        return seq
 
     # ---- capture and streams ----------------------------------------------
 

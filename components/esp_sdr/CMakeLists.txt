@@ -23,8 +23,10 @@ idf_component_register(
         "src/dsp/fir_design.c"
         "src/dsp/iq_pack.c"
         "src/record/record.c"
+        "src/tx/packet.c"
+        "src/tx/tx.c"
     INCLUDE_DIRS "include"
-    PRIV_INCLUDE_DIRS "src" "src/hal" "src/dsp" "src/record" "src/stream"
+    PRIV_INCLUDE_DIRS "src" "src/hal" "src/dsp" "src/record" "src/stream" "src/tx"
     LDFRAGMENTS "linker.lf"
     REQUIRES esp_wifi esp_phy esp_timer esp_event esp_hw_support nvs_flash heap
     PRIV_REQUIRES esp-dsp)

@@ -1,4 +1,4 @@
-idf_component_register(SRCS "main.c" "requests.c" "link.c" "frame.c" "gpio_control.c"
+idf_component_register(SRCS "main.c" "requests.c" "link.c" "frame.c" "gpio_control.c" "mode_switch.c"
                        PRIV_REQUIRES esp_sdr driver esp_hw_support)
 
 target_compile_options(${COMPONENT_LIB} PRIVATE -Wall -Wextra -Werror -Wno-unused-parameter)

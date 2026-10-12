@@ -21,6 +21,18 @@ extern void force_rx_gain(uint32_t manual, uint32_t index, uint32_t unused);
 extern void set_rx_gain_table(uint32_t mhz, uint32_t flags);
 /* libphy.a: stop the calibration tone generator. */
 extern void stop_tx_tone(uint32_t wait);
+/* libphy.a: tone generator for transmit (proven in the TX spike, IDF 5.3):
+ * debug mode routes the generator to the PA; step(1, 0, atten, ...) starts it. */
+extern void txcal_debuge_mode(void);
+extern void txcal_work_mode(void);
+extern void start_tx_tone_step(uint32_t on, int32_t a, int32_t atten, uint32_t b, int32_t c, int32_t d);
+/* Tone generator 1: bits 0..9 signed frequency offset, 40 MHz / 256 per step;
+ * bit 18 enables the tone. After esp_sdr_init(TX) a positive value raises
+ * the frequency (measured 2026-10-13, tests/hw/tx_rf.py; the rftest-mode spike
+ * saw the opposite). */
+#define PHY_TONE1_REG 0x60006040u
+#define PHY_TONE_FIELD_MASK 0x3FFu
+#define PHY_TONE_ON (1u << 18)
 /* libphy.a: PHY parameter block. +288 bit 0x200 marks the RX DC tables valid. */
 extern uint8_t phy_param[];
 #define PHY_PARAM_RX_DC_FLAGS_OFFSET 288u

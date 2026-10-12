@@ -14,6 +14,7 @@
 
 namespace esp_sdr {
 
+enum class Mode : uint8_t { Rx = ESP_SDR_MODE_RX, Tx = ESP_SDR_MODE_TX };
 enum class Rate : uint8_t { Msps80 = ESP_SDR_RATE_80M, Msps40 = ESP_SDR_RATE_40M, Msps16 = ESP_SDR_RATE_16M };
 enum class Workers : uint8_t {
     Single = ESP_SDR_WORKERS_SINGLE,
@@ -41,7 +42,7 @@ using Filter = esp_sdr_filter_t;
 
 class Radio {
 public:
-    esp_err_t begin() { return esp_sdr_init(); }
+    esp_err_t begin(Mode mode = Mode::Rx) { return esp_sdr_init(static_cast<esp_sdr_mode_t>(mode)); }
 
     esp_err_t tune(uint32_t mhz) { return esp_sdr_set_frequency(mhz); }
     uint32_t frequency() const { return esp_sdr_get_frequency(); }

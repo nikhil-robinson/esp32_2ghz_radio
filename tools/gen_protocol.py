@@ -62,7 +62,8 @@ def protocol_header():
                 [(f'RSP_{m.name}', f'0x{m.id:02X}') for m in p.RESPONSES])]
     for name, table in (('wire_rate_t', p.RATES), ('wire_format_t', p.FORMATS), ('wire_workers_t', p.WORKERS),
                         ('wire_gpio_t', p.GPIO_STATES), ('wire_run_status_t', p.RUN_STATUS),
-                        ('wire_error_t', p.ERRORS)):
+                        ('wire_error_t', p.ERRORS), ('wire_mode_t', p.MODES),
+                        ('wire_region_t', p.REGIONS)):
         out.append(enum(name, [(f'WIRE_{k}', v) for k, v in table.items()]))
     out += [message_struct(m, 'msg_') for m in p.REQUESTS + p.RESPONSES]
     return ''.join(out).rstrip('\n') + '\n'
@@ -96,6 +97,7 @@ Every frame, in both directions and for stream records, has the same layout
 
 Rules:
 
+* Requests marked "followed by" carry variable data after the fixed fields.
 * Requests carry at most {p.MAX_REQUEST_PAYLOAD} payload bytes; longer ones are answered with `ERR_BAD_LENGTH`.
 * A request with a bad CRC is ignored; the host times out and retries.
 * Every request gets exactly one `ACK` or typed reply, except `CAPTURE`, `RING_*`,
@@ -106,7 +108,7 @@ Rules:
   request, or until `RELEASE`) is answered with `ERR_BUSY`.
 
 Values: rate: {values(p.RATES)}; format: {values(p.FORMATS)}; workers: {values(p.WORKERS)};
-GPIO state: {values(p.GPIO_STATES)}.
+GPIO state: {values(p.GPIO_STATES)}; mode: {values(p.MODES)}; region: {values(p.REGIONS)}.
 
 Errors: {values(p.ERRORS)}.
 

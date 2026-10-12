@@ -46,7 +46,7 @@ python3 tools/scan.py /dev/ttyACM0 --rate 2 --out scan   # scan.csv + scan.png
 static IRAM_ATTR size_t my_write(void *ctx, const uint8_t *data, size_t size) { /* non-blocking */ }
 static IRAM_ATTR bool my_stop(void *ctx) { /* true to end the run */ }
 
-ESP_ERROR_CHECK(esp_sdr_init());
+ESP_ERROR_CHECK(esp_sdr_init(ESP_SDR_MODE_RX));
 esp_sdr_set_frequency(2440);
 esp_sdr_sink_t sink = {.write = my_write, .stop_requested = my_stop};
 esp_sdr_run_config_t run = {.mode = ESP_SDR_RUN_SPECTRUM, .rate = ESP_SDR_RATE_40M,
@@ -54,6 +54,25 @@ esp_sdr_run_config_t run = {.mode = ESP_SDR_RUN_SPECTRUM, .rate = ESP_SDR_RATE_4
 esp_sdr_run_result_t result;
 esp_sdr_run(&run, &sink, &result);
 ```
+
+Transmit (one mode per boot; `esp_sdr_tx.h`):
+
+```c
+#include "esp_sdr_tx.h"
+
+ESP_ERROR_CHECK(esp_sdr_init(ESP_SDR_MODE_TX));
+static const uint8_t adv[6] = {0x11, 0x22, 0x33, 0x44, 0x55, 0xC6};
+static const uint8_t data[] = {2, 1, 6, 7, 9, 'E', 'S', 'P', 'S', 'D', 'R'};
+esp_sdr_tx_ble_adv(37, adv, data, sizeof(data), 0, 100, 1000);      /* 100 adverts, 1 ms apart */
+esp_sdr_nrf24_t nrf = {.addr = {0xE7, 0xE7, 0xE7, 0xE7, 0xE7}, .addr_len = 5, .crc_len = 2,
+                       .channel = 76, .bitrate = 1000000};
+esp_sdr_tx_nrf24(&nrf, payload, 8, 1, 0);
+```
+
+The default region is the 2.4 GHz ISM band; `esp_sdr_tx_set_region()` opts in to
+HAM (2300–2450 MHz, licensed amateurs) or UNRESTRICTED (2210–2790 MHz, shielded
+lab use) with a logged warning. The serial firmware switches mode with `SET_MODE`
+(the board restarts; `Device.set_mode()` reconnects).
 
 C++ users can include `esp_sdr.hpp` (`esp_sdr::Radio`, same calls, no exceptions or heap).
 
@@ -72,6 +91,7 @@ FreeRTOS, interrupt watchdog off, 240 MHz).
 | Full-band scan | 1842–2790 MHz in 0.9 s (78 kHz bins), 1.6 s (39 kHz) or 4.3 s (15.6 kHz); flat (±0.5 dB in-step), clock spurs removed, mean or peak detector with dwell |
 | I/Q stream | 16 Msps input, decimation 32–1024; gap-free up to the link: 500 kS/s (4-bit), 250 kS/s (8-bit), 125 kS/s (16-bit) |
 | Bandwidth | baseband filter ≈ 13–69 MHz |
+| Transmit | carrier, 2-FSK / GFSK (BT 0.5) at 250k / 1M / 2M bit/s, deviation in 156.25 kHz steps; BLE ADV_NONCONN_IND (received by a stock NimBLE scanner on 37/38/39), nRF24 ShockBurst with CRC 0/1/2 (no ESB); ISM by default |
 
 ## Repository
 

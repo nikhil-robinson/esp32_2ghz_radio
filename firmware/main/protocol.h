@@ -5,13 +5,14 @@
 #include <stdint.h>
 #include "esp_sdr_record.h"
 
-#define PROTOCOL_VERSION 1u
+#define PROTOCOL_VERSION 2u
 #define PROTOCOL_MAX_REQUEST_PAYLOAD 64u
 
 typedef enum {
     REQ_GET_INFO = 0x01,
     REQ_RELEASE = 0x02,
     REQ_SET_BAUD = 0x03,
+    REQ_SET_MODE = 0x04,
     REQ_SET_FREQUENCY = 0x10,
     REQ_SET_PLL_OFFSET = 0x11,
     REQ_SET_GAIN = 0x12,
@@ -30,6 +31,12 @@ typedef enum {
     REQ_IQ_STREAM = 0x24,
     REQ_SCAN = 0x25,
     REQ_STOP = 0x2F,
+    REQ_TX_REGION = 0x40,
+    REQ_TX_TONE = 0x41,
+    REQ_TX_OFF = 0x42,
+    REQ_TX_BITS = 0x43,
+    REQ_TX_BLE = 0x44,
+    REQ_TX_NRF24 = 0x45,
     REQ_GET_GPIO = 0x30,
     REQ_SET_GPIO = 0x31,
     RSP_ACK = 0x80,
@@ -89,13 +96,31 @@ typedef enum {
     WIRE_ERR_UNSUPPORTED = 6,
     WIRE_ERR_NO_MEMORY = 7,
     WIRE_ERR_HARDWARE = 8,
+    WIRE_ERR_WRONG_MODE = 9,
 } wire_error_t;
+
+typedef enum {
+    WIRE_MODE_RX = 0,
+    WIRE_MODE_TX = 1,
+} wire_mode_t;
+
+typedef enum {
+    WIRE_REGION_ISM = 0,
+    WIRE_REGION_HAM = 1,
+    WIRE_REGION_UNRESTRICTED = 2,
+} wire_region_t;
 
 /** UART only: ACK at the old rate, then switch. */
 typedef struct __attribute__((packed)) {
     uint32_t baud;
 } msg_set_baud_t;
 _Static_assert(sizeof(msg_set_baud_t) == 4, "SET_BAUD layout");
+
+/** ACK, then restart in receive (0) or transmit (1) mode; the host reconnects. */
+typedef struct __attribute__((packed)) {
+    uint8_t mode;
+} msg_set_mode_t;
+_Static_assert(sizeof(msg_set_mode_t) == 1, "SET_MODE layout");
 
 /** Tune the receive LO. */
 typedef struct __attribute__((packed)) {
@@ -208,6 +233,67 @@ typedef struct __attribute__((packed)) {
 } msg_scan_t;
 _Static_assert(sizeof(msg_scan_t) == 16, "SCAN layout");
 
+/** Transmit region: 0 ISM 2400-2483.5, 1 HAM 2300-2450, 2 UNRESTRICTED 2210-2790 MHz. */
+typedef struct __attribute__((packed)) {
+    uint8_t region;
+} msg_tx_region_t;
+_Static_assert(sizeof(msg_tx_region_t) == 1, "TX_REGION layout");
+
+/** Carrier on at khz until TX_OFF. atten 0 = full power. */
+typedef struct __attribute__((packed)) {
+    uint32_t khz;
+    uint8_t atten;
+} msg_tx_tone_t;
+_Static_assert(sizeof(msg_tx_tone_t) == 5, "TX_TONE layout");
+
+/** Send nbits packed bits (first = bit 7 of byte 0, 1 = +deviation) count times; followed by the bits. ACK when done (ERR_TIMEOUT: CPU fell behind the bit clock). */
+typedef struct __attribute__((packed)) {
+    uint32_t center_khz;
+    uint32_t bitrate;
+    uint32_t deviation_hz;
+    uint32_t gap_us;
+    uint16_t count;
+    uint16_t nbits;
+    uint8_t gaussian;
+    uint8_t atten;
+    uint16_t reserved;
+} msg_tx_bits_t;
+_Static_assert(sizeof(msg_tx_bits_t) == 24, "TX_BITS layout");
+
+/** BLE ADV_NONCONN_IND, channel 37..39, AdvA adv0..adv5 LSB first; followed by AdvData (<= 31 bytes). ACK when done. */
+typedef struct __attribute__((packed)) {
+    uint32_t gap_us;
+    uint16_t count;
+    uint8_t channel;
+    uint8_t atten;
+    uint8_t adv0;
+    uint8_t adv1;
+    uint8_t adv2;
+    uint8_t adv3;
+    uint8_t adv4;
+    uint8_t adv5;
+    uint16_t reserved;
+} msg_tx_ble_t;
+_Static_assert(sizeof(msg_tx_ble_t) == 16, "TX_BLE layout");
+
+/** nRF24 ShockBurst (no ESB), address addr0.. in air order; followed by the payload (<= 32 bytes). ACK when done. */
+typedef struct __attribute__((packed)) {
+    uint32_t bitrate;
+    uint32_t gap_us;
+    uint16_t count;
+    uint8_t channel;
+    uint8_t atten;
+    uint8_t addr_len;
+    uint8_t crc_len;
+    uint8_t addr0;
+    uint8_t addr1;
+    uint8_t addr2;
+    uint8_t addr3;
+    uint8_t addr4;
+    uint8_t reserved;
+} msg_tx_nrf24_t;
+_Static_assert(sizeof(msg_tx_nrf24_t) == 20, "TX_NRF24 layout");
+
 /** Drive or float a free GPIO. */
 typedef struct __attribute__((packed)) {
     uint8_t pin;
@@ -235,7 +321,8 @@ typedef struct __attribute__((packed)) {
     uint8_t rates;
     uint16_t max_samples;
     uint16_t max_nfft;
-    uint16_t reserved;
+    uint8_t mode;
+    uint8_t region;
 } msg_info_t;
 _Static_assert(sizeof(msg_info_t) == 16, "INFO layout");
 

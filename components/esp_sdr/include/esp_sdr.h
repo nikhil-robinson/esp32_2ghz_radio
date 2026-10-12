@@ -2,7 +2,7 @@
  * ESP-SDR: the ESP32-S3 2.4 GHz radio as a software-defined receiver.
  *
  * Radio only: the library never touches USB, UART or networking. Call
- * esp_sdr_init() once, then tune, set gain/filter and capture. All calls are
+ * esp_sdr_init(ESP_SDR_MODE_RX) once, then tune, set gain/filter and capture. All calls are
  * for one task; they are not reentrant. Streams (esp_sdr_run) mask interrupts
  * on core 0 for their whole duration and hand their output records
  * (esp_sdr_record.h) to an application-provided sink.
@@ -79,8 +79,18 @@ static inline int16_t esp_sdr_word_raw_q(uint32_t w) { return (int16_t)((int32_t
 
 /* ---- setup ------------------------------------------------------------- */
 
-/** Bring up NVS, the Wi-Fi PHY (no networking), the receiver and the second core. */
-esp_err_t esp_sdr_init(void);
+typedef enum {
+    ESP_SDR_MODE_RX = 0,  /**< receiver: capture, streams, scan */
+    ESP_SDR_MODE_TX = 1,  /**< transmitter (esp_sdr_tx.h); receiver calls return ESP_ERR_INVALID_STATE */
+} esp_sdr_mode_t;
+
+/**
+ * Bring up NVS and the Wi-Fi PHY (no networking) in one mode, once per boot.
+ * RX also prepares the receiver and starts the second core. Calls of the
+ * other mode return ESP_ERR_INVALID_STATE; to switch, restart the chip.
+ */
+esp_err_t esp_sdr_init(esp_sdr_mode_t mode);
+esp_sdr_mode_t esp_sdr_get_mode(void);
 uint32_t esp_sdr_rate_hz(esp_sdr_rate_t rate);
 
 /* ---- receiver ---------------------------------------------------------- */

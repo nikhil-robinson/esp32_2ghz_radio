@@ -5,13 +5,14 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "gpio_control.h"
+#include "mode_switch.h"
 #include "requests.h"
 
 void app_main(void)
 {
     /* The console shares the link: any log line would corrupt a frame. */
     esp_log_level_set("*", ESP_LOG_NONE);
-    ESP_ERROR_CHECK(esp_sdr_init());
+    ESP_ERROR_CHECK(esp_sdr_init(mode_switch_boot_mode()));
     link_init();
     gpio_control_init();
     for (;;) {

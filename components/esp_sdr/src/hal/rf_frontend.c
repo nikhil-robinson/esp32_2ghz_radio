@@ -96,6 +96,14 @@ void rf_prepare_rx(void)
 
 void rf_invalidate(void) { rx_ready = false; }
 
+void rf_tune_tx(uint32_t mhz, uint32_t khz)
+{
+    select_lo_divider(false);
+    set_chanfreq(DEFAULT_MHZ, 0);
+    set_rf_freq_offset(0, mhz, (int32_t)khz);
+    rx_ready = false;
+}
+
 void rf_set_frequency(uint32_t mhz)
 {
     frequency_mhz = mhz;

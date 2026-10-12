@@ -7,6 +7,7 @@
 
 #include "esp_heap_caps.h"
 #include "esp_sdr.h"
+#include "esp_sdr_tx.h"
 #include "frame.h"
 #include "link.h"
 #include "protocol.h"
@@ -14,6 +15,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "gpio_control.h"
+#include "mode_switch.h"
 #include "soc/soc_caps.h"
 
 #define MAX_DURATION_MS 86400000u
@@ -44,6 +46,7 @@ static uint8_t error_of(esp_err_t err)
     case ESP_ERR_TIMEOUT: return WIRE_ERR_TIMEOUT;
     case ESP_ERR_NO_MEM: return WIRE_ERR_NO_MEMORY;
     case ESP_ERR_NOT_SUPPORTED: return WIRE_ERR_UNSUPPORTED;
+    case ESP_ERR_INVALID_STATE: return WIRE_ERR_WRONG_MODE;
     default: return WIRE_ERR_HARDWARE;
     }
 }
@@ -82,6 +85,8 @@ static void get_info(reply_to_t to)
         .rates = (1u << ESP_SDR_RATE_80M) | (1u << ESP_SDR_RATE_40M) | (1u << ESP_SDR_RATE_16M),
         .max_samples = ESP_SDR_MAX_BURST_SAMPLES,
         .max_nfft = ESP_SDR_MAX_NFFT,
+        .mode = (uint8_t)esp_sdr_get_mode(),
+        .region = (uint8_t)esp_sdr_tx_get_region(),
     };
     esp_sdr_gain_t gain;
     esp_sdr_get_gain(&gain);
@@ -339,6 +344,33 @@ static void scan(reply_to_t to, const msg_scan_t *q)
     run_done(to, &r, error_of(err));
 }
 
+/* ---- transmitter ------------------------------------------------------- */
+
+static void tx_bits(reply_to_t to, const msg_tx_bits_t *q, const uint8_t *body, size_t body_len)
+{
+    if (!q->nbits || (q->nbits + 7u) / 8u != body_len || q->gaussian > 1) {
+        ack(to, WIRE_ERR_BAD_ARGUMENT);
+        return;
+    }
+    const esp_sdr_fsk_t fsk = {.center_khz = q->center_khz, .bitrate = q->bitrate, .deviation_hz = q->deviation_hz,
+                               .gaussian = q->gaussian, .atten = q->atten};
+    ack(to, error_of(esp_sdr_tx_bits(&fsk, body, q->nbits, q->count, q->gap_us)));
+}
+
+static void tx_ble(reply_to_t to, const msg_tx_ble_t *q, const uint8_t *body, size_t body_len)
+{
+    const uint8_t adv[6] = {q->adv0, q->adv1, q->adv2, q->adv3, q->adv4, q->adv5};
+    ack(to, error_of(esp_sdr_tx_ble_adv(q->channel, adv, body, body_len, q->atten, q->count, q->gap_us)));
+}
+
+static void tx_nrf24(reply_to_t to, const msg_tx_nrf24_t *q, const uint8_t *body, size_t body_len)
+{
+    const esp_sdr_nrf24_t c = {.addr = {q->addr0, q->addr1, q->addr2, q->addr3, q->addr4}, .addr_len = q->addr_len,
+                               .crc_len = q->crc_len, .channel = q->channel, .bitrate = q->bitrate,
+                               .atten = q->atten};
+    ack(to, error_of(esp_sdr_tx_nrf24(&c, body, body_len, q->count, q->gap_us)));
+}
+
 /* ---- GPIO --------------------------------------------------------------- */
 
 static void get_gpio(reply_to_t to)
@@ -351,6 +383,14 @@ static void get_gpio(reply_to_t to)
 /* ---- dispatch ----------------------------------------------------------- */
 
 #define PAYLOAD(type) ((const type *)request->payload)
+#define BODY(type) (request->payload + sizeof(type)), (request->length - sizeof(type))
+#define NEEDS_AT_LEAST(type)                          \
+    do {                                              \
+        if (request->length < sizeof(type)) {         \
+            ack(to, WIRE_ERR_BAD_LENGTH);     \
+            return;                                   \
+        }                                             \
+    } while (0)
 #define NEEDS(type)                                   \
     do {                                              \
         if (request->length != sizeof(type)) {        \
@@ -373,6 +413,40 @@ void requests_handle(const link_request_t *request)
     case REQ_SET_BAUD:
         NEEDS(msg_set_baud_t);
         set_baud(to, PAYLOAD(msg_set_baud_t));
+        return;
+    case REQ_SET_MODE: {
+        NEEDS(msg_set_mode_t);
+        uint8_t mode = PAYLOAD(msg_set_mode_t)->mode;
+        if (mode > WIRE_MODE_TX) {
+            ack(to, WIRE_ERR_BAD_ARGUMENT);
+            return;
+        }
+        ack(to, WIRE_ERR_NONE);
+        mode_switch_restart((esp_sdr_mode_t)mode);  /* does not return */
+        return;
+    }
+    case REQ_TX_REGION:
+        NEEDS(msg_tx_region_t);
+        ack(to, error_of(esp_sdr_tx_set_region((esp_sdr_region_t)PAYLOAD(msg_tx_region_t)->region)));
+        return;
+    case REQ_TX_TONE:
+        NEEDS(msg_tx_tone_t);
+        ack(to, error_of(esp_sdr_tx_tone(PAYLOAD(msg_tx_tone_t)->khz, PAYLOAD(msg_tx_tone_t)->atten)));
+        return;
+    case REQ_TX_OFF:
+        ack(to, error_of(esp_sdr_tx_off()));
+        return;
+    case REQ_TX_BITS:
+        NEEDS_AT_LEAST(msg_tx_bits_t);
+        tx_bits(to, PAYLOAD(msg_tx_bits_t), BODY(msg_tx_bits_t));
+        return;
+    case REQ_TX_BLE:
+        NEEDS_AT_LEAST(msg_tx_ble_t);
+        tx_ble(to, PAYLOAD(msg_tx_ble_t), BODY(msg_tx_ble_t));
+        return;
+    case REQ_TX_NRF24:
+        NEEDS_AT_LEAST(msg_tx_nrf24_t);
+        tx_nrf24(to, PAYLOAD(msg_tx_nrf24_t), BODY(msg_tx_nrf24_t));
         return;
     case REQ_SET_FREQUENCY:
         NEEDS(msg_set_frequency_t);

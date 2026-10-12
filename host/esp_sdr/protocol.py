@@ -23,7 +23,7 @@ MAGIC = 0xD5E5
 HEADER_SIZE = 8
 CRC_SIZE = 4
 MAX_REQUEST_PAYLOAD = 64
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 2
 
 # C type -> struct format character.
 _CTYPES = {'uint8_t': 'B', 'int8_t': 'b', 'uint16_t': 'H', 'int16_t': 'h',
@@ -64,12 +64,17 @@ GPIO_STATES = {'GPIO_FLOAT': 0, 'GPIO_LOW': 1, 'GPIO_HIGH': 2}
 RUN_STATUS = {'RUN_OK': 0, 'RUN_FAIL_ARG': 1, 'RUN_FAIL_LATE': 2, 'RUN_FAIL_AGE': 3,
               'RUN_FAIL_START': 4, 'RUN_FAIL_END': 5, 'RUN_FAIL_LENGTH': 6}
 ERRORS = {'ERR_NONE': 0, 'ERR_UNKNOWN_COMMAND': 1, 'ERR_BAD_LENGTH': 2, 'ERR_BAD_ARGUMENT': 3,
-          'ERR_BUSY': 4, 'ERR_TIMEOUT': 5, 'ERR_UNSUPPORTED': 6, 'ERR_NO_MEMORY': 7, 'ERR_HARDWARE': 8}
+          'ERR_BUSY': 4, 'ERR_TIMEOUT': 5, 'ERR_UNSUPPORTED': 6, 'ERR_NO_MEMORY': 7, 'ERR_HARDWARE': 8,
+          'ERR_WRONG_MODE': 9}
+MODES = {'MODE_RX': 0, 'MODE_TX': 1}
+REGIONS = {'REGION_ISM': 0, 'REGION_HAM': 1, 'REGION_UNRESTRICTED': 2}
 
 REQUESTS = (
     _m('GET_INFO', 0x01, 'Firmware identity and limits; answered with INFO.'),
     _m('RELEASE', 0x02, 'Give up the port lease now.'),
     _m('SET_BAUD', 0x03, 'UART only: ACK at the old rate, then switch.', ('baud', 'uint32_t')),
+    _m('SET_MODE', 0x04, 'ACK, then restart in receive (0) or transmit (1) mode; the host reconnects.',
+       ('mode', 'uint8_t')),
     _m('SET_FREQUENCY', 0x10, 'Tune the receive LO.', ('mhz', 'uint16_t'), ('reserved', 'uint16_t')),
     _m('SET_PLL_OFFSET', 0x11, 'Fine LO offset applied from the next tune.', ('khz', 'int32_t')),
     _m('SET_GAIN', 0x12, 'manual=0: hardware AGC; manual=1: fixed PHY gain index.',
@@ -103,6 +108,27 @@ REQUESTS = (
        ('nfft', 'uint16_t'), ('gain', 'uint8_t'), ('detector', 'uint8_t'), ('sweeps', 'uint16_t'),
        ('dwell', 'uint8_t'), ('flags', 'uint8_t'), ('reserved', 'uint16_t')),
     _m('STOP', 0x2F, 'Ends a running stream or scan (any byte also does).'),
+    _m('TX_REGION', 0x40, 'Transmit region: 0 ISM 2400-2483.5, 1 HAM 2300-2450, 2 UNRESTRICTED 2210-2790 MHz.',
+       ('region', 'uint8_t')),
+    _m('TX_TONE', 0x41, 'Carrier on at khz until TX_OFF. atten 0 = full power.',
+       ('khz', 'uint32_t'), ('atten', 'uint8_t')),
+    _m('TX_OFF', 0x42, 'Carrier off.'),
+    _m('TX_BITS', 0x43, 'Send nbits packed bits (first = bit 7 of byte 0, 1 = +deviation) count times; '
+       'followed by the bits. ACK when done (ERR_TIMEOUT: CPU fell behind the bit clock).',
+       ('center_khz', 'uint32_t'), ('bitrate', 'uint32_t'), ('deviation_hz', 'uint32_t'), ('gap_us', 'uint32_t'),
+       ('count', 'uint16_t'), ('nbits', 'uint16_t'), ('gaussian', 'uint8_t'), ('atten', 'uint8_t'),
+       ('reserved', 'uint16_t')),
+    _m('TX_BLE', 0x44, 'BLE ADV_NONCONN_IND, channel 37..39, AdvA adv0..adv5 LSB first; followed by AdvData '
+       '(<= 31 bytes). ACK when done.',
+       ('gap_us', 'uint32_t'), ('count', 'uint16_t'), ('channel', 'uint8_t'), ('atten', 'uint8_t'),
+       ('adv0', 'uint8_t'), ('adv1', 'uint8_t'), ('adv2', 'uint8_t'), ('adv3', 'uint8_t'), ('adv4', 'uint8_t'),
+       ('adv5', 'uint8_t'), ('reserved', 'uint16_t')),
+    _m('TX_NRF24', 0x45, 'nRF24 ShockBurst (no ESB), address addr0.. in air order; followed by the payload '
+       '(<= 32 bytes). ACK when done.',
+       ('bitrate', 'uint32_t'), ('gap_us', 'uint32_t'), ('count', 'uint16_t'), ('channel', 'uint8_t'),
+       ('atten', 'uint8_t'), ('addr_len', 'uint8_t'), ('crc_len', 'uint8_t'), ('addr0', 'uint8_t'),
+       ('addr1', 'uint8_t'), ('addr2', 'uint8_t'), ('addr3', 'uint8_t'), ('addr4', 'uint8_t'),
+       ('reserved', 'uint8_t')),
     _m('GET_GPIO', 0x30, 'Answered with GPIO.'),
     _m('SET_GPIO', 0x31, 'Drive or float a free GPIO.', ('pin', 'uint8_t'), ('state', 'uint8_t')),
 )
@@ -113,7 +139,7 @@ RESPONSES = (
     _m('INFO', 0x81, 'Followed by the JSON version record (variable length).',
        ('protocol', 'uint16_t'), ('min_mhz', 'uint16_t'), ('max_mhz', 'uint16_t'), ('gain_max', 'uint8_t'),
        ('bw_min_mhz', 'uint8_t'), ('bw_max_mhz', 'uint8_t'), ('rates', 'uint8_t'),
-       ('max_samples', 'uint16_t'), ('max_nfft', 'uint16_t'), ('reserved', 'uint16_t')),
+       ('max_samples', 'uint16_t'), ('max_nfft', 'uint16_t'), ('mode', 'uint8_t'), ('region', 'uint8_t')),
     _m('GAIN', 0x82, 'Current gain state.', ('manual', 'uint8_t'), ('index', 'uint8_t'),
        ('max_index', 'uint8_t'), ('forced', 'uint8_t')),
     _m('FILTER', 0x83, 'Requested code (-1 automatic) and the two active register codes.',

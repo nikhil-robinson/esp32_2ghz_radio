@@ -10,7 +10,9 @@
 #include "frame.h"
 #include "iq_pack.h"
 #include "lo_plan.h"
+#include "packet.h"
 #include "scan_plan.h"
+#include "tx_plan.h"
 
 static int failures;
 #define CHECK(cond)                                                     \
@@ -179,6 +181,61 @@ static void test_scan_plan(void)
     CHECK(scan_plan(2400, 2400, 40000000).steps == 0);
 }
 
+/* Golden vectors from the independent Python reference in tools/demod.py. */
+static void test_packet_ble(void)
+{
+    static const uint8_t adv[6] = {0x11, 0x22, 0x33, 0x44, 0x55, 0xC6};
+    static const uint8_t data[] = {2, 1, 6, 7, 9, 'E', 'S', 'P', 'S', 'D', 'R'};
+    static const uint8_t ch37[] = {0x55, 0x6B, 0x7D, 0x91, 0x71, 0xF3, 0xC3, 0x62, 0xC1, 0x70, 0xC7, 0xCC, 0x6E, 0xEE,
+                                   0x0C, 0xE8, 0xF2, 0xF9, 0x4C, 0xD5, 0xCD, 0xA8, 0xB5, 0x9F, 0x63, 0x7D, 0xCD};
+    static const uint8_t ch39[] = {0x55, 0x6B, 0x7D, 0x91, 0x71, 0xBA, 0x64, 0xDA, 0xBE, 0x6D, 0x4D, 0x93, 0x3A, 0xC3,
+                                   0xEB, 0xC3, 0xC2, 0x94, 0x38, 0xB1, 0x8D, 0x3B, 0xFA, 0xEF, 0x9D, 0x46, 0xD9};
+    uint8_t out[PACKET_BLE_MAX_BYTES];
+    CHECK(packet_ble_adv(out, 37, adv, data, sizeof(data)) == 216 && !memcmp(out, ch37, sizeof(ch37)));
+    CHECK(packet_ble_adv(out, 39, adv, data, sizeof(data)) == 216 && !memcmp(out, ch39, sizeof(ch39)));
+    /* CRC-24 of this PDU as sent, from the on-air-verified spike: 0x680407. */
+    static const uint8_t pdu[] = {0x42, 0x11, 0x11, 0x22, 0x33, 0x44, 0x55, 0xC6, 2, 1, 6, 7, 9,
+                                  'E', 'S', 'P', 'S', 'D', 'R'};
+    CHECK(packet_ble_crc24(pdu, sizeof(pdu)) == 0x680407u);
+    uint8_t big[32] = {0};
+    CHECK(packet_ble_adv(out, 36, adv, data, sizeof(data)) == 0);
+    CHECK(packet_ble_adv(out, 37, adv, big, 32) == 0);
+    CHECK(packet_ble_adv(out, 37, adv, big, 31) == 8u * PACKET_BLE_MAX_BYTES);
+}
+
+static void test_packet_nrf24(void)
+{
+    static const uint8_t check[] = {'1', '2', '3', '4', '5', '6', '7', '8', '9'};
+    CHECK(packet_crc16(check, 9) == 0x29B1u);  /* CRC-16/CCITT-FALSE check value */
+    CHECK(packet_crc8(check, 9) == 0xFBu);
+    static const uint8_t addr5[5] = {0xE7, 0xE7, 0xE7, 0xE7, 0xE7};
+    static const uint8_t pl8[8] = {1, 2, 3, 4, 5, 6, 7, 8};
+    static const uint8_t want2[] = {0xAA, 0xE7, 0xE7, 0xE7, 0xE7, 0xE7, 1, 2, 3, 4, 5, 6, 7, 8, 0x4C, 0xE7};
+    uint8_t out[PACKET_NRF24_MAX_BYTES];
+    CHECK(packet_nrf24(out, addr5, 5, 2, pl8, 8) == 128 && !memcmp(out, want2, sizeof(want2)));
+    static const uint8_t addr3[3] = {0x12, 0x34, 0x56};
+    static const uint8_t pl1[1] = {0xAB};
+    static const uint8_t want1[] = {0x55, 0x12, 0x34, 0x56, 0xAB, 0xFA};
+    CHECK(packet_nrf24(out, addr3, 3, 1, pl1, 1) == 48 && !memcmp(out, want1, sizeof(want1)));
+    CHECK(packet_nrf24(out, addr3, 3, 0, pl1, 1) == 40);
+    CHECK(packet_nrf24(out, addr3, 2, 0, pl1, 1) == 0 && packet_nrf24(out, addr3, 3, 3, pl1, 1) == 0);
+}
+
+static void test_tx_plan(void)
+{
+    CHECK(tx_region_allows(ESP_SDR_REGION_ISM, 2401687, 2402312));
+    CHECK(!tx_region_allows(ESP_SDR_REGION_ISM, 2399844, 2400156));  /* deviation crosses the edge */
+    CHECK(tx_region_allows(ESP_SDR_REGION_ISM, 2483000, 2483500) && !tx_region_allows(ESP_SDR_REGION_ISM, 2483000, 2483501));
+    CHECK(tx_region_allows(ESP_SDR_REGION_HAM, 2300000, 2300400) && !tx_region_allows(ESP_SDR_REGION_HAM, 2460000, 2460400));
+    CHECK(tx_region_allows(ESP_SDR_REGION_UNRESTRICTED, 2210000, 2790000));
+    CHECK(!tx_region_allows(ESP_SDR_REGION_UNRESTRICTED, 2100000, 2100400));
+    CHECK(!tx_region_allows((esp_sdr_region_t)3, 2440000, 2440000));
+    CHECK(tx_deviation_steps(0) == 1 && tx_deviation_steps(160000) == 1 && tx_deviation_steps(250000) == 2);
+    CHECK(tx_deviation_steps(320000) == 2 && tx_deviation_steps(500000) == 3);
+    CHECK(tx_bitrate_supported(1000000) && !tx_bitrate_supported(500000));
+    CHECK(tx_substeps(2000000, true) == 4 && tx_substeps(1000000, true) == 4 && tx_substeps(250000, false) == 1);
+}
+
 int main(void)
 {
     test_scan_plan();
@@ -188,6 +245,9 @@ int main(void)
     test_db_code();
     test_fir_design();
     test_frame_codec();
+    test_packet_ble();
+    test_packet_nrf24();
+    test_tx_plan();
     printf(failures ? "%d FAILED\n" : "all C unit tests passed\n", failures);
     return failures != 0;
 }

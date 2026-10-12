@@ -19,6 +19,10 @@ void rf_prepare_rx(void);
 /* Force the next rf_prepare_rx() to run completely. */
 void rf_invalidate(void);
 
+/* Transmit: put the LO exactly on mhz + khz through the direct PLL path
+ * (2210..2790 MHz; no receive calibration). */
+void rf_tune_tx(uint32_t mhz, uint32_t khz);
+
 void rf_set_gain(bool manual, uint8_t index);
 bool rf_gain_manual(void);
 uint8_t rf_gain_index(void);

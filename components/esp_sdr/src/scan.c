@@ -9,6 +9,7 @@
 #include "db_code.h"
 #include "esp_heap_caps.h"
 #include "esp_sdr.h"
+#include "mode.h"
 #include "esp_timer.h"
 #include "rf.h"
 #include "scan_plan.h"
@@ -225,6 +226,9 @@ static uint8_t suppress_spurs(uint8_t *codes, uint16_t bins, double start_hz, do
 
 esp_err_t esp_sdr_scan(const esp_sdr_scan_config_t *c, esp_sdr_scan_cb_t callback, void *ctx)
 {
+    if (sdr_mode() != ESP_SDR_MODE_RX) {
+        return ESP_ERR_INVALID_STATE;
+    }
     scan_t s = {.config = c, .rate_hz = esp_sdr_rate_hz(c->rate)};
     s.plan = scan_plan(c->from_mhz, c->to_mhz, s.rate_hz);
     if (!s.rate_hz || !callback || !spectrum_valid_nfft(c->nfft) || !c->averages || !c->dwell ||
