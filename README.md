@@ -71,7 +71,10 @@ esp_sdr_tx_nrf24(&nrf, payload, 8, 1, 0);
 
 The default region is the 2.4 GHz ISM band; `esp_sdr_tx_set_region()` opts in to
 HAM (2300–2450 MHz, licensed amateurs) or UNRESTRICTED (2210–2780 MHz, shielded
-lab use) with a logged warning. The serial firmware switches mode with `SET_MODE`
+lab use) with a logged warning. Boards differ by a few ppm, and transmitting
+heats the chip (a continuous carrier drifts up to ~5 ppm/min): measure a board
+against a reference with `tools/calibrate.py` and apply it with
+`esp_sdr_set_crystal_ppb()`. The serial firmware switches mode with `SET_MODE`
 (the board restarts; `Device.set_mode()` reconnects).
 
 C++ users can include `esp_sdr.hpp` (`esp_sdr::Radio`, same calls, no exceptions or heap).
@@ -91,7 +94,7 @@ FreeRTOS, interrupt watchdog off, 240 MHz).
 | Full-band scan | 1842–2790 MHz in 0.9 s (78 kHz bins), 1.6 s (39 kHz) or 4.3 s (15.6 kHz); flat (±0.5 dB in-step), clock spurs removed, mean or peak detector with dwell |
 | I/Q stream | 16 Msps input, decimation 32–1024; gap-free up to the link: 500 kS/s (4-bit), 250 kS/s (8-bit), 125 kS/s (16-bit) |
 | Bandwidth | baseband filter ≈ 13–69 MHz |
-| Transmit | carrier, 2-FSK / GFSK (BT 0.5) at 250k / 1M / 2M bit/s, deviation in 156.25 kHz steps; BLE ADV_NONCONN_IND (received by a stock NimBLE scanner on 37/38/39), nRF24 ShockBurst with CRC 0/1/2 (no ESB); ISM by default |
+| Transmit | 2210–2780 MHz; carrier, 2-FSK / GFSK (BT 0.5) at 250k / 1M / 2M bit/s, deviation in 39 kHz steps; BLE ADV_NONCONN_IND (received by a stock NimBLE scanner on 37/38/39), nRF24 ShockBurst with CRC 0/1/2 (no ESB); ISM by default |
 
 ## Repository
 
