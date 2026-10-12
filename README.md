@@ -31,6 +31,11 @@ with Device('/dev/ttyACM0') as sdr:
     for frame in sdr.stream('SPECTRUM', rate=1, nfft=1024, duration_ms=1000):
         if frame.message.name == 'SPECTRUM_FRAME':
             bins = frame.body()             # 0.5 dB codes, FFT order
+    freq_hz, db, _ = sdr.scan(1842, 2790)   # whole range, stitched
+```
+
+```bash
+python3 tools/scan.py /dev/ttyACM0 --rate 2 --out scan   # scan.csv + scan.png
 ```
 
 ## Using the library in your own application
@@ -64,6 +69,7 @@ FreeRTOS, interrupt watchdog off, 240 MHz).
 | Burst capture | 256–16 380 samples at 80 / 40 / 16 Msps; IQ32, packed IQ10 or IQ8 |
 | Continuous | gapless, sentinel-verified ring at 80 / 40 / 16 Msps |
 | Spectrum | 256–2048-point FFT, mean or max-hold, both cores |
+| Full-band scan | 1842–2790 MHz in 0.9 s (78 kHz bins), 1.6 s (39 kHz) or 4.3 s (15.6 kHz) |
 | I/Q stream | decimation 64–1024, 4/8/16-bit, optional fs/4 shift |
 | Bandwidth | baseband filter ≈ 13–69 MHz |
 
@@ -74,7 +80,7 @@ components/esp_sdr/   library (see docs/architecture.md)
 components/esp-dsp/   Espressif esp-dsp (submodule, v1.8.2)
 firmware/             serial firmware: link, protocol dispatcher, GPIO
 host/esp_sdr/         protocol.py (source of truth), device.py (client)
-tools/                gen_protocol.py (headers + docs/protocol.md), version.py
+tools/                scan.py (sweep -> CSV/PNG), gen_protocol.py (headers + docs), version.py
 tests/host/           host unit tests: python -m unittest discover -s tests/host
 tests/hw/             hardware parity suite: python tests/hw/parity.py /dev/ttyACM0
 docs/                 protocol.md, architecture.md, refactor-log.md

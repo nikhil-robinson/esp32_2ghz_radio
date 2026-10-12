@@ -185,6 +185,43 @@ void esp_sdr_run_unit(const esp_sdr_run_result_t *result, unsigned u,
                       const uint32_t **head, uint32_t *head_count,
                       const uint32_t **tail, uint32_t *tail_count);
 
+/* ---- full-band scan ---------------------------------------------------- */
+
+#define ESP_SDR_SCAN_GAIN_AGC 255u
+
+typedef struct {
+    uint32_t from_mhz;      /**< >= ESP_SDR_MIN_MHZ + offset (1/2/4 MHz at 16/40/80 Msps) */
+    uint32_t to_mhz;        /**< last step's LO must be <= ESP_SDR_MAX_MHZ */
+    esp_sdr_rate_t rate;    /**< step width: 6 / 16 / 32 MHz at 16 / 40 / 80 Msps */
+    uint16_t nfft;          /**< 256..2048: resolution = rate / nfft */
+    uint8_t averages;       /**< FFTs averaged per step (capped by 16380 / nfft) */
+    uint8_t gain_index;     /**< fixed gain for comparable steps; ESP_SDR_SCAN_GAIN_AGC = hardware AGC */
+} esp_sdr_scan_config_t;
+
+typedef struct {
+    uint32_t step;          /**< 0 .. steps - 1 */
+    uint32_t steps;
+    uint32_t lo_mhz;
+    uint32_t start_hz;      /**< absolute frequency of codes[0] */
+    uint32_t bin_millihz;   /**< spacing of codes, mHz */
+    uint16_t bins;
+    uint8_t gain_index;
+    uint8_t ffts;           /**< FFTs averaged */
+    uint32_t elapsed_us;    /**< time spent on this step */
+    const uint8_t *codes;   /**< 0.5 dB codes relative to full scale, ascending frequency */
+} esp_sdr_scan_segment_t;
+
+/** Return false to abort the scan. Called on the caller's task; may block. */
+typedef bool (*esp_sdr_scan_cb_t)(const esp_sdr_scan_segment_t *segment, void *ctx);
+
+/**
+ * One sweep from from_mhz to to_mhz in LO steps; each step's slice above the
+ * LO (clear of DC and filter edges) is delivered in ascending frequency order.
+ * Restores frequency and gain afterwards. ESP_ERR_INVALID_ARG if the plan
+ * leaves the verified LO range; ESP_ERR_INVALID_STATE if aborted.
+ */
+esp_err_t esp_sdr_scan(const esp_sdr_scan_config_t *config, esp_sdr_scan_cb_t callback, void *ctx);
+
 void esp_sdr_set_workers(esp_sdr_workers_t workers);
 esp_sdr_workers_t esp_sdr_get_workers(void);
 bool esp_sdr_core1_alive(void);

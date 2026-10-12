@@ -789,3 +789,29 @@ uint32_t spectrum_begin(bool dual, bool assist)
     claim.seq = claim.assist_seq = claim.handoff_full = claim.assist_blocks = 0;
     return assist_cost;
 }
+
+/* ---- one-shot (scan) ---------------------------------------------------- */
+
+bool spectrum_burst_power(const uint32_t *words, uint32_t n, uint32_t blocks, float *power)
+{
+    if (!spectrum_init() || !spectrum_valid_nfft(n) || blocks * n > DUMP_RING_PAIRS) {
+        return false;
+    }
+    prepare_tables(n);
+    for (uint32_t k = 0; k < n; k++) {
+        power[k] = 0.0f;
+    }
+    for (uint32_t b = 0; b < blocks; b++) {
+        unpack(fft_buffer, words, b * n, 0, n);
+        fft_sc16_rounded(fft_buffer, (int)n, dsps_fft_w_table_sc16);
+        for (uint32_t k = 0; k < n; k++) {
+            const int16_t *x = fft_buffer + 2 * slot_of_bin[k];
+            power[k] += (float)((uint32_t)(x[0] * x[0]) + (uint32_t)(x[1] * x[1]));
+        }
+    }
+    const float scale = 1.0f / (float)blocks;
+    for (uint32_t k = 0; k < n; k++) {
+        power[k] *= scale;
+    }
+    return true;
+}

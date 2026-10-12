@@ -41,5 +41,7 @@ bool link_send_frame_split(uint8_t type, uint8_t seq, const void *head, size_t h
 /* Sink for esp_sdr_run(): records go to the active port; any received byte
  * requests a stop. Call link_discard_input() after the run. */
 const esp_sdr_sink_t *link_stream_sink(void);
+/* True when the host sent anything (a stop request) on the active port. */
+bool link_stop_requested(void);
 /* Drop input that arrived during a stream (the stop request). */
 void link_discard_input(void);

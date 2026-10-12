@@ -5,6 +5,7 @@ endif()
 idf_component_register(
     SRCS
         "src/sdr.c"
+        "src/scan.c"
         "src/hal/rf_frontend.c"
         "src/hal/rf_calibration.c"
         "src/hal/burst.c"

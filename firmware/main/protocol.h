@@ -28,6 +28,7 @@ typedef enum {
     REQ_RING_CAPTURE = 0x22,
     REQ_SPECTRUM = 0x23,
     REQ_IQ_STREAM = 0x24,
+    REQ_SCAN = 0x25,
     REQ_STOP = 0x2F,
     REQ_GET_GPIO = 0x30,
     REQ_SET_GPIO = 0x31,
@@ -40,6 +41,7 @@ typedef enum {
     RSP_GPIO = 0x86,
     RSP_DATA = 0xA0,
     RSP_RING_DATA = 0xA1,
+    RSP_SCAN_SEGMENT = 0xA6,
     RSP_RUN_DONE = 0xA5,
 } message_type_t;
 
@@ -190,6 +192,19 @@ typedef struct __attribute__((packed)) {
 } msg_iq_stream_t;
 _Static_assert(sizeof(msg_iq_stream_t) == 12, "IQ_STREAM layout");
 
+/** Full-band scan; SCAN_SEGMENT frames then RUN_DONE. sweeps 0 = until STOP; gain 255 = AGC. */
+typedef struct __attribute__((packed)) {
+    uint16_t from_mhz;
+    uint16_t to_mhz;
+    uint8_t rate;
+    uint8_t averages;
+    uint16_t nfft;
+    uint8_t gain;
+    uint8_t reserved;
+    uint16_t sweeps;
+} msg_scan_t;
+_Static_assert(sizeof(msg_scan_t) == 12, "SCAN layout");
+
 /** Drive or float a free GPIO. */
 typedef struct __attribute__((packed)) {
     uint8_t pin;
@@ -277,7 +292,24 @@ typedef struct __attribute__((packed)) {
 } msg_ring_data_t;
 _Static_assert(sizeof(msg_ring_data_t) == 20, "RING_DATA layout");
 
-/** Ends every CAPTURE / RING_* / SPECTRUM / IQ_STREAM request. */
+/** One scan step; followed by `bins` 0.5 dB codes, ascending frequency. */
+typedef struct __attribute__((packed)) {
+    uint32_t sweep;
+    uint16_t step;
+    uint16_t steps;
+    uint16_t lo_mhz;
+    uint16_t bins;
+    uint32_t start_hz;
+    uint32_t bin_millihz;
+    uint8_t gain;
+    uint8_t ffts;
+    uint8_t db_step;
+    uint8_t reserved;
+    uint32_t elapsed_us;
+} msg_scan_segment_t;
+_Static_assert(sizeof(msg_scan_segment_t) == 28, "SCAN_SEGMENT layout");
+
+/** Ends every CAPTURE / RING_* / SPECTRUM / IQ_STREAM / SCAN request. */
 typedef struct __attribute__((packed)) {
     uint8_t status;
     uint8_t stopped_by_host;

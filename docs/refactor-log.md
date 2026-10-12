@@ -42,6 +42,17 @@ the baseline (61.1 % vs 60.6 % at 16M/256).
    untracked, empty `components/esp-dsp` (now a pinned submodule).
 9. **`M_PI` in strict C17** – not defined; explicit constant.
 
+## Added after phase 1
+
+* **Full-band scan** (`esp_sdr_scan`, `SCAN`, `Device.scan`, `tools/scan.py`):
+  1842-2790 MHz in 0.9 s (80 Msps steps, 78 kHz bins), 1.6 s (40 Msps, 39 kHz)
+  or 4.3 s (16 Msps, 15.6 kHz). Each step keeps the slice above the LO clear of
+  DC and filter edges; fixed gain makes steps comparable. Stitched sweeps place
+  the crystal harmonics within one fifth of a bin.
+  Known limits: a few dB of in-step ripple (analog filter shape, uncalibrated);
+  internal 40 MHz / 16 MHz harmonics appear as narrow spurs; bursty signals
+  (Wi-Fi, BLE) appear only in the step captured during a burst.
+
 ## Removed
 
 Non-S3 targets, S31 streaming and web UI, the S2 USB console, browser/web-flasher

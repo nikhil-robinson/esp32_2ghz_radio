@@ -187,6 +187,23 @@ class Device:
         (info, data), = self.capture_raw(samples, rate)
         return decode_iq32(np.frombuffer(data, '<u4')), info
 
+    def scan(self, from_mhz: int = 1842, to_mhz: int = 2790, rate: int = 1, nfft: int = 1024, averages: int = 8,
+             gain: int | None = 40) -> tuple[np.ndarray, np.ndarray, dict]:
+        """One full-band sweep. Returns (frequency Hz, power dB rel. full scale, run result).
+
+        rate 0/1/2 = 80/40/16 Msps captures (32/16/6 MHz per step); gain None = AGC
+        (levels then differ between steps)."""
+        freqs, levels = [], []
+        for f in self.stream('SCAN', timeout=120.0, from_mhz=from_mhz, to_mhz=to_mhz, rate=rate, nfft=nfft,
+                             averages=averages, gain=255 if gain is None else gain, sweeps=1):
+            if f.message.name != 'SCAN_SEGMENT':
+                continue
+            v = f.fields()
+            codes = np.frombuffer(f.body(), np.uint8).astype(np.float32)
+            freqs.append(v['start_hz'] + np.arange(v['bins']) * v['bin_millihz'] / 1000.0)
+            levels.append(codes / v['db_step'])
+        return np.concatenate(freqs), np.concatenate(levels), self.last_run
+
     def stream(self, name: str, timeout: float = 30.0, **fields) -> Iterator[Frame]:
         """Frames of a stream request; ends after RUN_DONE (see last_run)."""
         seq = self.send(name, **fields)

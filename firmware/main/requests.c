@@ -278,6 +278,55 @@ static void iq_stream(reply_to_t to, const msg_iq_stream_t *q)
     run_stream(to, &c);  /* the library validates decimation/bits/shift (RUN_FAIL_ARG) */
 }
 
+/* ---- full-band scan ----------------------------------------------------- */
+
+typedef struct {
+    reply_to_t to;
+    uint32_t sweep;
+} scan_context_t;
+
+static bool send_segment(const esp_sdr_scan_segment_t *seg, void *ctx)
+{
+    scan_context_t *s = ctx;
+    msg_scan_segment_t m = {
+        .sweep = s->sweep, .step = (uint16_t)seg->step, .steps = (uint16_t)seg->steps,
+        .lo_mhz = (uint16_t)seg->lo_mhz, .bins = seg->bins, .start_hz = seg->start_hz,
+        .bin_millihz = seg->bin_millihz, .gain = seg->gain_index, .ffts = seg->ffts, .db_step = 2,
+        .elapsed_us = seg->elapsed_us,
+    };
+    return link_send_frame_split(RSP_SCAN_SEGMENT, s->to.seq, &m, sizeof(m), seg->codes, seg->bins) &&
+           !link_stop_requested();
+}
+
+static void scan(reply_to_t to, const msg_scan_t *q)
+{
+    if (q->rate > ESP_SDR_RATE_16M || !q->averages) {
+        run_done(to, NULL, WIRE_ERR_BAD_ARGUMENT);
+        return;
+    }
+    const esp_sdr_scan_config_t c = {.from_mhz = q->from_mhz, .to_mhz = q->to_mhz, .rate = (esp_sdr_rate_t)q->rate,
+                                     .nfft = q->nfft, .averages = q->averages, .gain_index = q->gain};
+    scan_context_t ctx = {.to = to};
+    esp_err_t err = ESP_OK;
+    bool stopped = false;
+    for (; !q->sweeps || ctx.sweep < q->sweeps; ctx.sweep++) {
+        err = esp_sdr_scan(&c, send_segment, &ctx);
+        if (err == ESP_ERR_INVALID_STATE) {  /* aborted by the host */
+            stopped = true;
+            err = ESP_OK;
+            break;
+        }
+        if (err != ESP_OK) {
+            break;
+        }
+    }
+    if (stopped) {
+        link_discard_input();
+    }
+    esp_sdr_run_result_t r = {.units = ctx.sweep, .stopped = stopped};  /* units = completed sweeps */
+    run_done(to, &r, error_of(err));
+}
+
 /* ---- GPIO --------------------------------------------------------------- */
 
 static void get_gpio(reply_to_t to)
@@ -389,6 +438,10 @@ void requests_handle(const link_request_t *request)
     case REQ_IQ_STREAM:
         NEEDS(msg_iq_stream_t);
         iq_stream(to, PAYLOAD(msg_iq_stream_t));
+        return;
+    case REQ_SCAN:
+        NEEDS(msg_scan_t);
+        scan(to, PAYLOAD(msg_scan_t));
         return;
     case REQ_STOP:
         ack(to, WIRE_ERR_NONE);  /* nothing running */

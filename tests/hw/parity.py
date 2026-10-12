@@ -43,6 +43,14 @@ def expect_error(dev, name, error, **fields):
     return False
 
 
+def expect_error_run(dev, name, **fields):
+    try:
+        run(dev, name, **fields)
+    except DeviceError:
+        return True
+    return False
+
+
 def run(dev, name, **fields):
     frames = list(dev.stream(name, **fields))
     return frames, dev.last_run
@@ -200,6 +208,18 @@ with Device(PORT) as dev:
               f"frames={d['frames']} drops={d['drops']} (base {b['frames']}/{b['drops']}) samples={samples}")
     _, d = run(dev, 'IQ_STREAM', rate=2, decimation=100, bits=8, shift=255, duration_ms=200)
     check('IQ stream rejects decimation 100', d['status'] == p.RUN_STATUS['RUN_FAIL_ARG'])
+
+    # ---- full-band scan --------------------------------------------------------
+    for rate, start, budget_s in ((1, 1842, 3.0), (0, 1844, 2.0)):
+        t = time.time()
+        f, db, r = dev.scan(start, 2790, rate=rate)
+        dt = time.time() - t
+        steps = np.diff(f)
+        check(f'scan {start}-2790 MHz rate {rate}: contiguous, in time', r['error'] == 0 and f[0] >= start * 1e6 and
+              f[-1] <= 2790e6 and steps.max() < 2 * np.median(steps) and dt < budget_s,
+              f'{len(f)} bins, {dt:.1f} s')
+    check('scan rejects LO below range', expect_error_run(dev, 'SCAN', from_mhz=1840, to_mhz=1900, rate=1, nfft=1024,
+                                                         averages=4, gain=40, sweeps=1))
 
 print(f"\n{'ALL PASS' if not failures else f'{len(failures)} FAILED: ' + ', '.join(failures)}")
 sys.exit(1 if failures else 0)

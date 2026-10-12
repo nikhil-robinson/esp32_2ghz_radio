@@ -10,6 +10,7 @@
 #include "frame.h"
 #include "iq_pack.h"
 #include "lo_plan.h"
+#include "scan_plan.h"
 
 static int failures;
 #define CHECK(cond)                                                     \
@@ -162,8 +163,25 @@ static void test_frame_codec(void)
     CHECK(feed(&p, buf, a + b, &last) == 2);  /* back-to-back frames in one read */
 }
 
+static void test_scan_plan(void)
+{
+    scan_plan_t p = scan_plan(1842, 2790, 40000000);
+    CHECK(p.offset_mhz == 2 && p.keep_mhz == 16 && p.first_lo_mhz == 1840 && p.steps == 60);
+    CHECK(scan_lo_mhz(&p, 59) == 2784 && scan_plan_valid(&p, 1842, 1840, 2790));
+    p = scan_plan(1841, 2790, 16000000);
+    CHECK(p.offset_mhz == 1 && p.keep_mhz == 6 && p.steps == 159 && scan_plan_valid(&p, 1841, 1840, 2790));
+    p = scan_plan(1844, 2790, 80000000);
+    CHECK(p.offset_mhz == 4 && p.keep_mhz == 32 && p.steps == 30 && scan_plan_valid(&p, 1844, 1840, 2790));
+    p = scan_plan(1840, 2790, 40000000);  /* first LO 1838: below the verified range */
+    CHECK(!scan_plan_valid(&p, 1840, 1840, 2790));
+    p = scan_plan(2400, 2810, 40000000);  /* last LO 2814 > 2790 */
+    CHECK(!scan_plan_valid(&p, 2400, 1840, 2790));
+    CHECK(scan_plan(2400, 2400, 40000000).steps == 0);
+}
+
 int main(void)
 {
+    test_scan_plan();
     test_lo_plan();
     test_bandwidth();
     test_iq_pack();

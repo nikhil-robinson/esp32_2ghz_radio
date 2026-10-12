@@ -54,7 +54,8 @@ Run status: run_ok = 0, run_fail_arg = 1, run_fail_late = 2, run_fail_age = 3, r
 | `RING_CAPTURE` | `0x22` | `rate` uint8, `units` uint8 | Gapless capture of 1..3 consecutive units; RING_DATA then RUN_DONE. |
 | `SPECTRUM` | `0x23` | `rate` uint8, `max_hold` uint8, `nfft` uint16, `stats` uint8, `duration_ms` uint32 | On-chip FFT stream; SPECTRUM_FRAME (+STATS) then RUN_DONE. |
 | `IQ_STREAM` | `0x24` | `rate` uint8, `bits` uint8, `decimation` uint16, `shift` uint8, `rotate` uint8, `duration_ms` uint32 | Decimated IQ stream; IQ_FRAME then RUN_DONE. shift 255 = automatic. |
-| `STOP` | `0x2F` | - | Ends a running stream (any byte also does). |
+| `SCAN` | `0x25` | `from_mhz` uint16, `to_mhz` uint16, `rate` uint8, `averages` uint8, `nfft` uint16, `gain` uint8, `sweeps` uint16 | Full-band scan; SCAN_SEGMENT frames then RUN_DONE. sweeps 0 = until STOP; gain 255 = AGC. |
+| `STOP` | `0x2F` | - | Ends a running stream or scan (any byte also does). |
 | `GET_GPIO` | `0x30` | - | Answered with GPIO. |
 | `SET_GPIO` | `0x31` | `pin` uint8, `state` uint8 | Drive or float a free GPIO. |
 
@@ -71,7 +72,8 @@ Run status: run_ok = 0, run_fail_arg = 1, run_fail_late = 2, run_fail_age = 3, r
 | `GPIO` | `0x86` | - | Followed by (pin u8, state u8) pairs for every free pin. |
 | `DATA` | `0xA0` | `samples` uint32, `elapsed_us` uint32, `format` uint8, `rate` uint8 | One burst capture; followed by the samples in `format`. |
 | `RING_DATA` | `0xA1` | `rate_hz` uint32, `units` uint32, `count0` uint32, `count1` uint32, `count2` uint32 | Units of a ring capture; followed by raw IQ32 words, back to back. |
-| `RUN_DONE` | `0xA5` | `status` uint8, `stopped_by_host` uint8, `error` uint8, `detail` uint32, `units` uint32, `late_max` uint32, `pairs` uint64, `elapsed_us` uint64, `work_max` uint32, `frames` uint32, `drops` uint32, `abandoned` uint32, `ffts` uint32, `lost_pairs` uint32 | Ends every CAPTURE / RING_* / SPECTRUM / IQ_STREAM request. |
+| `SCAN_SEGMENT` | `0xA6` | `sweep` uint32, `step` uint16, `steps` uint16, `lo_mhz` uint16, `bins` uint16, `start_hz` uint32, `bin_millihz` uint32, `gain` uint8, `ffts` uint8, `db_step` uint8, `elapsed_us` uint32 | One scan step; followed by `bins` 0.5 dB codes, ascending frequency. |
+| `RUN_DONE` | `0xA5` | `status` uint8, `stopped_by_host` uint8, `error` uint8, `detail` uint32, `units` uint32, `late_max` uint32, `pairs` uint64, `elapsed_us` uint64, `work_max` uint32, `frames` uint32, `drops` uint32, `abandoned` uint32, `ffts` uint32, `lost_pairs` uint32 | Ends every CAPTURE / RING_* / SPECTRUM / IQ_STREAM / SCAN request. |
 
 ## Stream records (emitted by the library, `esp_sdr_record.h`)
 

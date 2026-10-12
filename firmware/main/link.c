@@ -264,6 +264,11 @@ static const esp_sdr_sink_t stream_sink = {
     .ctx = NULL,
 };
 
+bool link_stop_requested(void)
+{
+    return sink_stop_requested(NULL);
+}
+
 const esp_sdr_sink_t *link_stream_sink(void)
 {
     return &stream_sink;
