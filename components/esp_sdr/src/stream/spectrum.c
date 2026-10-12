@@ -21,6 +21,7 @@
 #define FLAG_MAX_HOLD 1u
 #define FLAG_ABANDONED 2u
 #define FLAG_DROPPED_BEFORE 4u
+#define PI_F 3.14159265358979f
 
 /* esp-dsp twiddles; the transform itself is our bias-corrected kernel. */
 extern int16_t *dsps_fft_w_table_sc16;
@@ -150,7 +151,7 @@ static void prepare_tables(unsigned n)
         log2n++;
     }
     for (unsigned i = 0; i < n; i++) {
-        window_q15[i] = (int16_t)lrintf(32767.0f * 0.5f * (1.0f - cosf(2.0f * (float)M_PI * (float)i / (float)n)));
+        window_q15[i] = (int16_t)lrintf(32767.0f * 0.5f * (1.0f - cosf(2.0f * PI_F * (float)i / (float)n)));
         window_pairs[2 * i] = window_pairs[2 * i + 1] = window_q15[i];
         unsigned reversed = 0;
         for (unsigned bit = 0; bit < log2n; bit++) {

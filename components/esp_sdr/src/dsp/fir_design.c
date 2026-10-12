@@ -3,6 +3,7 @@
 #include <math.h>
 
 #define KAISER_BETA 5.65f
+#define PI_F 3.14159265358979f
 #define STAGE1_KERNEL_TAPS 18u
 #define STAGE1_TRIANGLE_TAPS 15u
 
@@ -22,7 +23,7 @@ static float kaiser_sinc_tap(uint32_t i, uint32_t count, float cutoff)
 {
     float m = (float)i - 0.5f * (float)(count - 1);
     float x = 2.0f * cutoff * m;
-    float sinc = fabsf(x) < 1e-6f ? 1.0f : sinf((float)M_PI * x) / ((float)M_PI * x);
+    float sinc = fabsf(x) < 1e-6f ? 1.0f : sinf(PI_F * x) / (PI_F * x);
     float r = 2.0f * m / (float)(count - 1);
     float window = bessel_i0(KAISER_BETA * sqrtf(fmaxf(0.0f, 1.0f - r * r))) / bessel_i0(KAISER_BETA);
     return 2.0f * cutoff * sinc * window;

@@ -33,3 +33,8 @@ Thumbs.db
 
 # CI SDK checkout
 /.esp-idf/
+
+# Firmware build outputs
+/firmware/build/
+/firmware/sdkconfig
+/firmware/sdkconfig.old
