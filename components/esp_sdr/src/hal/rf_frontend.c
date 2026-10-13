@@ -8,6 +8,7 @@
  */
 #include "rf.h"
 
+#include "esp_attr.h"
 #include "esp_rom_sys.h"
 #include "lo_plan.h"
 #include "phy_private.h"
@@ -108,6 +109,31 @@ void rf_prepare_rx(void)
 
 void rf_invalidate(void) { rx_ready = false; }
 
+void rf_tune_rx_khz(uint32_t khz)
+{
+    uint32_t mhz = khz / 1000u;
+    int32_t offset = (int32_t)(khz % 1000u);
+    if (mhz != frequency_mhz || offset != pll_offset_khz) {  /* re-arming at the same LO stays cheap */
+        frequency_mhz = mhz;
+        pll_offset_khz = offset;
+        rx_ready = false;
+    }
+    rf_prepare_rx();
+}
+
+/* Back to receive after the tone generator, without retuning or settling
+ * (a capture straight after TX matched a settled one: measured). */
+IRAM_ATTR void rf_rx_resume(void)
+{
+    stop_tx_tone(1);
+    rom_pbus_workmode();
+    rom_pbus_xpd_tx_off();
+    rom_pbus_xpd_rx_on(1);
+    rom_set_rxclk_en(1);
+    apply_gain();
+    select_lo_divider(lo_plan(frequency_mhz).alternate);
+}
+
 void rf_tune_tx(uint32_t mhz, uint32_t khz)
 {
     select_lo_divider(false);
@@ -185,3 +211,4 @@ void rf_filter_restore(void)
         }
     }
 }
+

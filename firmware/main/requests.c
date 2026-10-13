@@ -7,7 +7,9 @@
 
 #include "esp_heap_caps.h"
 #include "esp_sdr.h"
+#include "esp_sdr_link.h"
 #include "esp_sdr_tx.h"
+#include "esp_timer.h"
 #include "frame.h"
 #include "link.h"
 #include "protocol.h"
@@ -17,6 +19,7 @@
 #include "gpio_control.h"
 #include "mode_switch.h"
 #include "soc/soc_caps.h"
+#include <string.h>
 
 #define MAX_DURATION_MS 86400000u
 #define MAX_REPEATS 1000u
@@ -371,6 +374,55 @@ static void tx_nrf24(reply_to_t to, const msg_tx_nrf24_t *q, const uint8_t *body
     ack(to, error_of(esp_sdr_tx_nrf24(&c, body, body_len, q->count, q->gap_us)));
 }
 
+/* ---- two-way link ----------------------------------------------------- */
+
+#define LINK_FROM(q)                                                                                        \
+    {.channel_khz = (q)->channel_khz, .bitrate = (q)->bitrate, .addr = {(q)->addr0, (q)->addr1, (q)->addr2,  \
+     (q)->addr3, (q)->addr4}, .addr_len = (q)->addr_len, .crc_len = (q)->crc_len, .atten = (q)->atten}
+#define LINK_RESPOND_SLICE_MS 50u  /* interrupts come back between slices */
+
+static void link_exchange(reply_to_t to, const msg_link_exchange_t *q, const uint8_t *body, size_t body_len)
+{
+    const esp_sdr_link_t l = LINK_FROM(q);
+    uint8_t rx[ESP_SDR_LINK_MAX_PAYLOAD] = {0};
+    esp_sdr_link_info_t info = {0};
+    esp_err_t err = q->rx_len > sizeof(rx) ? ESP_ERR_INVALID_ARG
+                  : esp_sdr_link_exchange(&l, body, body_len, rx, q->rx_len, q->timeout_us, &info);
+    msg_link_result_t m = {.error = error_of(err), .len = err == ESP_OK ? q->rx_len : 0, .delay_ns = info.delay_ns,
+                           .crc_failures = info.crc_failures, .syncs = info.syncs,
+                           .edge_errors = info.edge_errors};
+    link_send_frame_split(RSP_LINK_RESULT, to.seq, &m, sizeof(m), rx, m.len);
+}
+
+static void link_respond(reply_to_t to, const msg_link_respond_t *q, const uint8_t *body, size_t body_len)
+{
+    const esp_sdr_link_t l = LINK_FROM(q);
+    uint8_t rx[ESP_SDR_LINK_MAX_PAYLOAD] = {0};
+    msg_link_summary_t m = {.delay_min_ns = UINT32_MAX};
+    esp_err_t err = q->rx_len > sizeof(rx) ? ESP_ERR_INVALID_ARG : ESP_OK;
+    int64_t end = esp_timer_get_time() + (int64_t)q->duration_ms * 1000;
+    while (err == ESP_OK && m.served < q->count && esp_timer_get_time() < end && !link_stop_requested()) {
+        esp_sdr_link_info_t info = {0};
+        esp_err_t e = esp_sdr_link_respond(&l, rx, q->rx_len, body, body_len, q->turnaround_us,
+                                           LINK_RESPOND_SLICE_MS, &info);
+        m.crc_failures += info.crc_failures;
+        m.syncs += info.syncs;
+        m.edge_errors += info.edge_errors;
+        if (e == ESP_OK) {
+            m.served++;
+            m.len = q->rx_len;
+            m.delay_sum_us += info.delay_ns / 1000u;
+            m.delay_min_ns = info.delay_ns < m.delay_min_ns ? info.delay_ns : m.delay_min_ns;
+            m.delay_max_ns = info.delay_ns > m.delay_max_ns ? info.delay_ns : m.delay_max_ns;
+        } else if (e != ESP_ERR_TIMEOUT) {
+            err = e;
+        }
+    }
+    link_discard_input();
+    m.error = error_of(err);
+    link_send_frame_split(RSP_LINK_SUMMARY, to.seq, &m, sizeof(m), rx, m.len);
+}
+
 /* ---- GPIO --------------------------------------------------------------- */
 
 static void get_gpio(reply_to_t to)
@@ -417,7 +469,7 @@ void requests_handle(const link_request_t *request)
     case REQ_SET_MODE: {
         NEEDS(msg_set_mode_t);
         uint8_t mode = PAYLOAD(msg_set_mode_t)->mode;
-        if (mode > WIRE_MODE_TX) {
+        if (mode > WIRE_MODE_TXRX) {
             ack(to, WIRE_ERR_BAD_ARGUMENT);
             return;
         }
@@ -447,6 +499,14 @@ void requests_handle(const link_request_t *request)
     case REQ_TX_NRF24:
         NEEDS_AT_LEAST(msg_tx_nrf24_t);
         tx_nrf24(to, PAYLOAD(msg_tx_nrf24_t), BODY(msg_tx_nrf24_t));
+        return;
+    case REQ_LINK_EXCHANGE:
+        NEEDS_AT_LEAST(msg_link_exchange_t);
+        link_exchange(to, PAYLOAD(msg_link_exchange_t), BODY(msg_link_exchange_t));
+        return;
+    case REQ_LINK_RESPOND:
+        NEEDS_AT_LEAST(msg_link_respond_t);
+        link_respond(to, PAYLOAD(msg_link_respond_t), BODY(msg_link_respond_t));
         return;
     case REQ_SET_FREQUENCY:
         NEEDS(msg_set_frequency_t);

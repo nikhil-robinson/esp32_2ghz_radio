@@ -226,7 +226,7 @@ static uint8_t suppress_spurs(uint8_t *codes, uint16_t bins, double start_hz, do
 
 esp_err_t esp_sdr_scan(const esp_sdr_scan_config_t *c, esp_sdr_scan_cb_t callback, void *ctx)
 {
-    if (sdr_mode() != ESP_SDR_MODE_RX) {
+    if (!sdr_can_rx()) {
         return ESP_ERR_INVALID_STATE;
     }
     scan_t s = {.config = c, .rate_hz = esp_sdr_rate_hz(c->rate)};

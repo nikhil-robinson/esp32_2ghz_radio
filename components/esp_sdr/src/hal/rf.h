@@ -22,6 +22,10 @@ void rf_invalidate(void);
 /* Transmit: put the LO exactly on mhz + khz through the direct PLL path
  * (2210..2790 MHz; no receive calibration). */
 void rf_tune_tx(uint32_t mhz, uint32_t khz);
+/* Receive at exactly `khz` (sets frequency and PLL offset) and prepare the path. */
+void rf_tune_rx_khz(uint32_t khz);
+/* Receive path back on after transmitting, same LO, no settle. */
+void rf_rx_resume(void);
 /* Crystal error to cancel in every tune, parts per billion (+ = runs fast). */
 void rf_set_crystal_ppb(int32_t ppb);
 int32_t rf_crystal_ppb(void);

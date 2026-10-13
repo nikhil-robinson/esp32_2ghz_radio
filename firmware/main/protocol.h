@@ -38,6 +38,8 @@ typedef enum {
     REQ_TX_BITS = 0x43,
     REQ_TX_BLE = 0x44,
     REQ_TX_NRF24 = 0x45,
+    REQ_LINK_EXCHANGE = 0x50,
+    REQ_LINK_RESPOND = 0x51,
     REQ_GET_GPIO = 0x30,
     REQ_SET_GPIO = 0x31,
     RSP_ACK = 0x80,
@@ -47,6 +49,8 @@ typedef enum {
     RSP_WORKERS = 0x84,
     RSP_MEMORY = 0x85,
     RSP_GPIO = 0x86,
+    RSP_LINK_RESULT = 0x87,
+    RSP_LINK_SUMMARY = 0x88,
     RSP_DATA = 0xA0,
     RSP_RING_DATA = 0xA1,
     RSP_SCAN_SEGMENT = 0xA6,
@@ -103,6 +107,7 @@ typedef enum {
 typedef enum {
     WIRE_MODE_RX = 0,
     WIRE_MODE_TX = 1,
+    WIRE_MODE_TXRX = 2,
 } wire_mode_t;
 
 typedef enum {
@@ -117,7 +122,7 @@ typedef struct __attribute__((packed)) {
 } msg_set_baud_t;
 _Static_assert(sizeof(msg_set_baud_t) == 4, "SET_BAUD layout");
 
-/** ACK, then restart in receive (0) or transmit (1) mode; the host reconnects. */
+/** ACK, then restart in receive (0), transmit (1) or two-way (2) mode; the host reconnects. */
 typedef struct __attribute__((packed)) {
     uint8_t mode;
 } msg_set_mode_t;
@@ -301,6 +306,46 @@ typedef struct __attribute__((packed)) {
 } msg_tx_nrf24_t;
 _Static_assert(sizeof(msg_tx_nrf24_t) == 20, "TX_NRF24 layout");
 
+/** TXRX mode: send the payload that follows, then return the first reply of rx_len bytes with a valid CRC within timeout_us; answered with LINK_RESULT. */
+typedef struct __attribute__((packed)) {
+    uint32_t channel_khz;
+    uint32_t bitrate;
+    uint8_t addr_len;
+    uint8_t crc_len;
+    uint8_t atten;
+    uint8_t rx_len;
+    uint8_t addr0;
+    uint8_t addr1;
+    uint8_t addr2;
+    uint8_t addr3;
+    uint8_t addr4;
+    uint8_t reserved;
+    uint16_t reserved2;
+    uint32_t timeout_us;
+} msg_link_exchange_t;
+_Static_assert(sizeof(msg_link_exchange_t) == 24, "LINK_EXCHANGE layout");
+
+/** TXRX mode: answer up to `count` packets of rx_len bytes with the reply that follows, turnaround_us after each one ends, for at most duration_ms; answered with LINK_SUMMARY. */
+typedef struct __attribute__((packed)) {
+    uint32_t channel_khz;
+    uint32_t bitrate;
+    uint8_t addr_len;
+    uint8_t crc_len;
+    uint8_t atten;
+    uint8_t rx_len;
+    uint8_t addr0;
+    uint8_t addr1;
+    uint8_t addr2;
+    uint8_t addr3;
+    uint8_t addr4;
+    uint8_t reserved;
+    uint16_t reserved2;
+    uint32_t turnaround_us;
+    uint32_t duration_ms;
+    uint32_t count;
+} msg_link_respond_t;
+_Static_assert(sizeof(msg_link_respond_t) == 32, "LINK_RESPOND layout");
+
 /** Drive or float a free GPIO. */
 typedef struct __attribute__((packed)) {
     uint8_t pin;
@@ -368,6 +413,33 @@ typedef struct __attribute__((packed)) {
     uint16_t threshold;
 } msg_memory_t;
 _Static_assert(sizeof(msg_memory_t) == 12, "MEMORY layout");
+
+/** One exchange; followed by the received payload. */
+typedef struct __attribute__((packed)) {
+    uint8_t error;
+    uint8_t len;
+    uint16_t reserved;
+    uint32_t delay_ns;
+    uint32_t crc_failures;
+    uint32_t syncs;
+    uint32_t edge_errors;
+} msg_link_result_t;
+_Static_assert(sizeof(msg_link_result_t) == 20, "LINK_RESULT layout");
+
+/** Responder statistics; followed by the last received payload. */
+typedef struct __attribute__((packed)) {
+    uint8_t error;
+    uint8_t len;
+    uint16_t reserved;
+    uint32_t served;
+    uint32_t delay_min_ns;
+    uint32_t delay_max_ns;
+    uint32_t delay_sum_us;
+    uint32_t crc_failures;
+    uint32_t syncs;
+    uint32_t edge_errors;
+} msg_link_summary_t;
+_Static_assert(sizeof(msg_link_summary_t) == 32, "LINK_SUMMARY layout");
 
 /** One burst capture; followed by the samples in `format`. */
 typedef struct __attribute__((packed)) {

@@ -25,7 +25,7 @@ esp_sdr_mode_t esp_sdr_get_mode(void) { return mode; }
 
 #define RX_ONLY()                               \
     do {                                        \
-        if (sdr_mode() != ESP_SDR_MODE_RX) {    \
+        if (!sdr_can_rx()) {                    \
             return ESP_ERR_INVALID_STATE;       \
         }                                       \
     } while (0)
@@ -70,7 +70,7 @@ esp_err_t esp_sdr_init(esp_sdr_mode_t m)
     if (initialised) {
         return ESP_ERR_INVALID_STATE;
     }
-    if (m != ESP_SDR_MODE_RX && m != ESP_SDR_MODE_TX) {
+    if (m != ESP_SDR_MODE_RX && m != ESP_SDR_MODE_TX && m != ESP_SDR_MODE_TXRX) {
         return ESP_ERR_INVALID_ARG;
     }
     ESP_RETURN_ON_ERROR(init_nvs(), TAG, "nvs");
@@ -102,7 +102,7 @@ void esp_sdr_set_crystal_ppb(int32_t ppb) { rf_set_crystal_ppb(ppb); }
 int32_t esp_sdr_get_crystal_ppb(void) { return rf_crystal_ppb(); }
 void esp_sdr_set_pll_offset(int32_t khz)
 {
-    if (sdr_mode() == ESP_SDR_MODE_RX) {
+    if (sdr_can_rx()) {
         rf_set_pll_offset(khz);
     }
 }
@@ -170,7 +170,7 @@ size_t esp_sdr_pack_iq8(uint32_t *words, uint32_t samples) { return iq_pack8(wor
 
 void esp_sdr_run(const esp_sdr_run_config_t *config, const esp_sdr_sink_t *sink, esp_sdr_run_result_t *result)
 {
-    if (sdr_mode() != ESP_SDR_MODE_RX) {
+    if (!sdr_can_rx()) {
         *result = (esp_sdr_run_result_t){.status = ESP_SDR_RUN_FAIL_ARG};
         return;
     }

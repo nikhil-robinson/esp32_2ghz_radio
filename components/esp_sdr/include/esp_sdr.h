@@ -82,6 +82,7 @@ static inline int16_t esp_sdr_word_raw_q(uint32_t w) { return (int16_t)((int32_t
 typedef enum {
     ESP_SDR_MODE_RX = 0,  /**< receiver: capture, streams, scan */
     ESP_SDR_MODE_TX = 1,  /**< transmitter (esp_sdr_tx.h); receiver calls return ESP_ERR_INVALID_STATE */
+    ESP_SDR_MODE_TXRX = 2,/**< both, plus the two-way packet link (esp_sdr_link.h) */
 } esp_sdr_mode_t;
 
 /**

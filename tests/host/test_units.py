@@ -9,8 +9,8 @@ ROOT = Path(__file__).resolve().parents[2]
 LIB = ROOT / 'components/esp_sdr'
 SOURCES = [ROOT / 'tests/host/unit_tests.c', ROOT / 'firmware/main/frame.c',
            *(LIB / 'src/dsp' / f for f in ('bandwidth.c', 'db_code.c', 'fir_design.c', 'iq_pack.c')),
-           LIB / 'src/tx/packet.c']
-INCLUDES = [LIB / 'include', LIB / 'src/dsp', LIB / 'src/tx', ROOT / 'firmware/main', ROOT / 'tests/host/stub']
+           LIB / 'src/tx/packet.c', LIB / 'src/link/link_frame.c']
+INCLUDES = [LIB / 'include', LIB / 'src/dsp', LIB / 'src/tx', LIB / 'src/link', ROOT / 'firmware/main', ROOT / 'tests/host/stub']
 
 
 @unittest.skipUnless(shutil.which('gcc'), 'gcc not available')

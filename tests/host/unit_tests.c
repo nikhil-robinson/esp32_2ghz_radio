@@ -9,6 +9,7 @@
 #include "fir_design.h"
 #include "frame.h"
 #include "iq_pack.h"
+#include "link_frame.h"
 #include "lo_plan.h"
 #include "packet.h"
 #include "scan_plan.h"
@@ -238,6 +239,27 @@ static void test_tx_plan(void)
     CHECK(tx_substeps(2000000, true) == 4 && tx_substeps(1000000, true) == 4 && tx_substeps(250000, false) == 1);
 }
 
+/* The receiver's sync word and CRC check agree with the transmitter's framing. */
+static void test_link_frame(void)
+{
+    static const uint8_t addr5[5] = {0xE7, 0xD3, 0xF0, 0x35, 0x77};
+    static const uint8_t pl[8] = {1, 2, 3, 4, 5, 6, 7, 8};
+    link_rx_plan_t p;
+    CHECK(link_rx_plan(&p, addr5, 5, 2, 8));
+    CHECK(p.sync == 0xD3F03577u && p.body_bits == 80);
+    uint8_t air[PACKET_NRF24_MAX_BYTES];
+    CHECK(packet_nrf24(air, addr5, 5, 2, pl, 8) == 8u * 16u);
+    CHECK(link_rx_check(&p, air + 6));         /* body = payload + CRC after preamble + address */
+    air[6 + 3] ^= 0x10;
+    CHECK(!link_rx_check(&p, air + 6));
+    static const uint8_t addr3[3] = {0x12, 0x34, 0x56};
+    CHECK(link_rx_plan(&p, addr3, 3, 1, 1) && p.sync == 0x55123456u && p.body_bits == 16);
+    CHECK(packet_nrf24(air, addr3, 3, 1, pl, 1) == 48 && link_rx_check(&p, air + 4));
+    CHECK(link_rx_plan(&p, addr3, 3, 0, 4) && link_rx_check(&p, air));
+    CHECK(!link_rx_plan(&p, addr3, 2, 0, 4) && !link_rx_plan(&p, addr3, 3, 3, 4) && !link_rx_plan(&p, addr3, 3, 0, 0));
+    CHECK(!link_rx_plan(&p, addr3, 3, 0, 33));
+}
+
 int main(void)
 {
     test_scan_plan();
@@ -250,6 +272,7 @@ int main(void)
     test_packet_ble();
     test_packet_nrf24();
     test_tx_plan();
+    test_link_frame();
     printf(failures ? "%d FAILED\n" : "all C unit tests passed\n", failures);
     return failures != 0;
 }

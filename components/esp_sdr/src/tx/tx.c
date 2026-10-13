@@ -22,6 +22,7 @@
 #include "phy_private.h"
 #include "rf.h"
 #include "soc/soc.h"
+#include "tx_internal.h"
 #include "tx_plan.h"
 #include "xtensa/xtruntime.h"
 
@@ -54,9 +55,9 @@ esp_err_t esp_sdr_tx_set_region(esp_sdr_region_t r)
 
 esp_sdr_region_t esp_sdr_tx_get_region(void) { return region; }
 
-static esp_err_t check(uint32_t center_khz, uint32_t deviation_khz)
+esp_err_t tx_check(uint32_t center_khz, uint32_t deviation_khz)
 {
-    if (sdr_mode() != ESP_SDR_MODE_TX) {
+    if (!sdr_can_tx()) {
         return ESP_ERR_INVALID_STATE;
     }
     if (center_khz < deviation_khz ||
@@ -66,10 +67,8 @@ static esp_err_t check(uint32_t center_khz, uint32_t deviation_khz)
     return ESP_OK;
 }
 
-/* Tune, start the generator, and return the register word with field 0, tone on. */
-static uint32_t carrier_start(uint32_t center_khz, uint8_t atten)
+uint32_t tx_tone_start(uint8_t atten)
 {
-    rf_tune_tx(center_khz / 1000u, center_khz % 1000u);
     txcal_debuge_mode();
     start_tx_tone_step(1, 0, atten, 0, 0, 0);
     carrier_on = true;
@@ -78,16 +77,26 @@ static uint32_t carrier_start(uint32_t center_khz, uint8_t atten)
     return (REG_READ(PHY_TONE1_REG) & ~PHY_TONE_FIELD_MASK) | PHY_TONE_ON;
 }
 
-static void carrier_stop(void)
+void tx_tone_stop(void)
 {
+    REG_WRITE(PHY_TONE1_FINE_REG, fine_base);
     start_tx_tone_step(0, 0, 0, 0, 0, 0);
     txcal_work_mode();
     carrier_on = false;
 }
 
+/* Tune, start the generator, and return the register word with field 0, tone on. */
+static uint32_t carrier_start(uint32_t center_khz, uint8_t atten)
+{
+    rf_tune_tx(center_khz / 1000u, center_khz % 1000u);
+    return tx_tone_start(atten);
+}
+
+static void carrier_stop(void) { tx_tone_stop(); }
+
 esp_err_t esp_sdr_tx_tone(uint32_t khz, uint8_t atten)
 {
-    esp_err_t err = check(khz, 0);
+    esp_err_t err = tx_check(khz, 0);
     if (err == ESP_OK) {
         REG_WRITE(PHY_TONE1_REG, carrier_start(khz, atten));
     }
@@ -96,7 +105,7 @@ esp_err_t esp_sdr_tx_tone(uint32_t khz, uint8_t atten)
 
 esp_err_t esp_sdr_tx_off(void)
 {
-    if (sdr_mode() != ESP_SDR_MODE_TX) {
+    if (!sdr_can_tx()) {
         return ESP_ERR_INVALID_STATE;
     }
     if (carrier_on) {
@@ -123,9 +132,10 @@ static float gaussian_pulse(float tau)
     return 0.5f * (erff(a * (tau + 0.5f)) - erff(a * (tau - 0.5f)));
 }
 
-/* Register pair (coarse, fine) for every sub-step. */
+/* Register pair (coarse, fine) for every sub-step; `offset` (fine units) moves
+ * the whole packet away from the LO. */
 static void build_table(uint32_t *table, const uint8_t *bits, size_t nbits, unsigned sub, int dev_steps,
-                        uint32_t on, bool fine)
+                        uint32_t on, bool fine, int offset)
 {
     size_t n = 0;
     for (long k = 0; k < (long)(nbits + TAIL_BITS); k++) {
@@ -142,7 +152,7 @@ static void build_table(uint32_t *table, const uint8_t *bits, size_t nbits, unsi
             }
             /* Fine units of 39.0625 kHz; positive = higher frequency. The coarse
              * field is 4 fine units, the fine bits add 0..3 on top (floor split). */
-            int v = fine ? (int)lroundf(f * (float)dev_steps) : 4 * (int)lroundf(f * (float)(dev_steps / 4));
+            int v = offset + (fine ? (int)lroundf(f * (float)dev_steps) : 4 * (int)lroundf(f * (float)(dev_steps / 4)));
             int coarse = v >> 2;  /* arithmetic shift: floor for negative v */
             table[n++] = on | ((uint32_t)coarse & PHY_TONE_FIELD_MASK);
             table[n++] = fine_base | ((uint32_t)v & PHY_TONE_FINE_MASK);
@@ -153,7 +163,7 @@ static void build_table(uint32_t *table, const uint8_t *bits, size_t nbits, unsi
 /* One packet (n register pairs) with interrupts masked; returns the worst lateness in cycles. */
 /* noinline: inlined into a flash function, IRAM_ATTR is silently lost and the
  * first packet after boot takes ~8 us flash-cache misses (measured). */
-static IRAM_ATTR __attribute__((noinline)) int32_t send_once(const uint32_t *table, size_t n, uint32_t cycles, uint32_t idle, bool fine)
+IRAM_ATTR __attribute__((noinline)) int32_t send_once(const uint32_t *table, size_t n, uint32_t cycles, uint32_t idle, bool fine)
 {
     unsigned irq = XTOS_SET_INTLEVEL(XCHAL_EXCM_LEVEL);
     int32_t worst = 0;
@@ -180,6 +190,34 @@ static IRAM_ATTR __attribute__((noinline)) int32_t send_once(const uint32_t *tab
     return worst;
 }
 
+esp_err_t tx_job_init(tx_job_t *j, uint32_t bitrate, uint32_t deviation_hz, bool gaussian, size_t nbits)
+{
+    if (!nbits || nbits > ESP_SDR_TX_MAX_BITS || !tx_bitrate_supported(bitrate)) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    j->sub = tx_substeps(bitrate, gaussian);
+    j->cycles = esp_clk_cpu_freq() / (bitrate * j->sub);
+    j->fine = j->cycles >= FINE_MIN_CYCLES;
+    j->dev_steps = tx_deviation_steps(deviation_hz);
+    if (!j->fine) {
+        j->dev_steps = 4 * ((j->dev_steps + 2) / 4 ? (j->dev_steps + 2) / 4 : 1);  /* whole coarse steps */
+    }
+    j->steps = (nbits + TAIL_BITS) * j->sub;
+    j->table = heap_caps_malloc(2 * j->steps * sizeof(uint32_t), MALLOC_CAP_INTERNAL);  /* not static: sram_guard */
+    return j->table ? ESP_OK : ESP_ERR_NO_MEM;
+}
+
+void tx_job_fill(tx_job_t *j, const uint8_t *bits, size_t nbits, uint32_t on, int offset)
+{
+    build_table(j->table, bits, nbits, j->sub, j->dev_steps, on, j->fine, offset);
+}
+
+void tx_job_free(tx_job_t *j)
+{
+    free(j->table);
+    j->table = NULL;
+}
+
 static void gap(uint32_t us)
 {
     if (us >= YIELD_GAP_US) {
@@ -192,32 +230,28 @@ static void gap(uint32_t us)
 esp_err_t esp_sdr_tx_bits(const esp_sdr_fsk_t *fsk, const uint8_t *bits, size_t nbits, uint16_t count,
                           uint32_t gap_us)
 {
-    if (!fsk || !bits || !nbits || nbits > ESP_SDR_TX_MAX_BITS || !count || !tx_bitrate_supported(fsk->bitrate)) {
-        return sdr_mode() != ESP_SDR_MODE_TX ? ESP_ERR_INVALID_STATE : ESP_ERR_INVALID_ARG;
+    if (!sdr_can_tx()) {
+        return ESP_ERR_INVALID_STATE;
     }
-    unsigned sub = tx_substeps(fsk->bitrate, fsk->gaussian);
-    uint32_t cycles = esp_clk_cpu_freq() / (fsk->bitrate * sub);
-    bool fine = cycles >= FINE_MIN_CYCLES;
-    int dev_steps = tx_deviation_steps(fsk->deviation_hz);
-    if (!fine) {
-        dev_steps = 4 * ((dev_steps + 2) / 4 ? (dev_steps + 2) / 4 : 1);  /* whole coarse steps */
+    if (!fsk || !bits || !count) {
+        return ESP_ERR_INVALID_ARG;
     }
-    esp_err_t err = check(fsk->center_khz, tx_steps_khz(dev_steps));
+    tx_job_t j;
+    esp_err_t err = tx_job_init(&j, fsk->bitrate, fsk->deviation_hz, fsk->gaussian, nbits);
+    if (err == ESP_OK) {
+        err = tx_check(fsk->center_khz, tx_steps_khz(j.dev_steps));
+    }
     if (err != ESP_OK) {
+        tx_job_free(&j);
         return err;
-    }
-    size_t n = (nbits + TAIL_BITS) * sub;
-    uint32_t *table = heap_caps_malloc(2 * n * sizeof(uint32_t), MALLOC_CAP_INTERNAL);  /* not static: sram_guard */
-    if (!table) {
-        return ESP_ERR_NO_MEM;
     }
     uint32_t on = carrier_start(fsk->center_khz, fsk->atten);
     uint32_t idle = on & ~PHY_TONE_ON;
-    build_table(table, bits, nbits, sub, dev_steps, on, fine);
+    tx_job_fill(&j, bits, nbits, on, 0);
     int32_t worst = 0;
     REG_WRITE(PHY_TONE1_REG, idle);
     for (unsigned c = 0; c < count; c++) {
-        int32_t late = send_once(table, n, cycles, idle, fine);
+        int32_t late = send_once(j.table, j.steps, j.cycles, idle, j.fine);
         if (late > worst) {
             worst = late;
         }
@@ -225,9 +259,9 @@ esp_err_t esp_sdr_tx_bits(const esp_sdr_fsk_t *fsk, const uint8_t *bits, size_t 
             gap(gap_us);
         }
     }
-    REG_WRITE(PHY_TONE1_FINE_REG, fine_base);
     carrier_stop();
-    free(table);
+    uint32_t cycles = j.cycles, sub = j.sub;
+    tx_job_free(&j);
     /* Half a bit late can flip the receiver's decision for that bit. */
     return worst > (int32_t)(cycles * sub / 2u) ? ESP_ERR_TIMEOUT : ESP_OK;
 }
@@ -240,7 +274,7 @@ esp_err_t esp_sdr_tx_ble_adv(uint8_t channel, const uint8_t adv_addr[6], const u
     uint8_t bits[PACKET_BLE_MAX_BYTES];
     size_t nbits = adv_addr ? packet_ble_adv(bits, channel, adv_addr, data, len) : 0;
     if (!nbits) {
-        return sdr_mode() != ESP_SDR_MODE_TX ? ESP_ERR_INVALID_STATE : ESP_ERR_INVALID_ARG;
+        return !sdr_can_tx() ? ESP_ERR_INVALID_STATE : ESP_ERR_INVALID_ARG;
     }
     const esp_sdr_fsk_t fsk = {.center_khz = ble_channel_khz[channel - 37], .bitrate = 1000000u,
                                .deviation_hz = 250000u, .atten = atten};  /* -> 234 kHz, index 0.47 */
@@ -255,7 +289,7 @@ esp_err_t esp_sdr_tx_nrf24(const esp_sdr_nrf24_t *config, const uint8_t *payload
                        ? packet_nrf24(bits, config->addr, config->addr_len, config->crc_len, payload, len)
                        : 0;
     if (!nbits) {
-        return sdr_mode() != ESP_SDR_MODE_TX ? ESP_ERR_INVALID_STATE : ESP_ERR_INVALID_ARG;
+        return !sdr_can_tx() ? ESP_ERR_INVALID_STATE : ESP_ERR_INVALID_ARG;
     }
     /* nRF24L01+ datasheet: +-160 kHz at 250 kbps / 1 Mbps, +-320 kHz at 2 Mbps. */
     const esp_sdr_fsk_t fsk = {.center_khz = 2400000u + 1000u * config->channel, .bitrate = config->bitrate,

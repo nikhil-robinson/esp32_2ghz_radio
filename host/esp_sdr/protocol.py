@@ -66,14 +66,14 @@ RUN_STATUS = {'RUN_OK': 0, 'RUN_FAIL_ARG': 1, 'RUN_FAIL_LATE': 2, 'RUN_FAIL_AGE'
 ERRORS = {'ERR_NONE': 0, 'ERR_UNKNOWN_COMMAND': 1, 'ERR_BAD_LENGTH': 2, 'ERR_BAD_ARGUMENT': 3,
           'ERR_BUSY': 4, 'ERR_TIMEOUT': 5, 'ERR_UNSUPPORTED': 6, 'ERR_NO_MEMORY': 7, 'ERR_HARDWARE': 8,
           'ERR_WRONG_MODE': 9}
-MODES = {'MODE_RX': 0, 'MODE_TX': 1}
+MODES = {'MODE_RX': 0, 'MODE_TX': 1, 'MODE_TXRX': 2}
 REGIONS = {'REGION_ISM': 0, 'REGION_HAM': 1, 'REGION_UNRESTRICTED': 2}
 
 REQUESTS = (
     _m('GET_INFO', 0x01, 'Firmware identity and limits; answered with INFO.'),
     _m('RELEASE', 0x02, 'Give up the port lease now.'),
     _m('SET_BAUD', 0x03, 'UART only: ACK at the old rate, then switch.', ('baud', 'uint32_t')),
-    _m('SET_MODE', 0x04, 'ACK, then restart in receive (0) or transmit (1) mode; the host reconnects.',
+    _m('SET_MODE', 0x04, 'ACK, then restart in receive (0), transmit (1) or two-way (2) mode; the host reconnects.',
        ('mode', 'uint8_t')),
     _m('SET_FREQUENCY', 0x10, 'Tune the receive LO.', ('mhz', 'uint16_t'), ('reserved', 'uint16_t')),
     _m('SET_PLL_OFFSET', 0x11, 'Fine LO offset applied from the next tune.', ('khz', 'int32_t')),
@@ -131,6 +131,18 @@ REQUESTS = (
        ('atten', 'uint8_t'), ('addr_len', 'uint8_t'), ('crc_len', 'uint8_t'), ('addr0', 'uint8_t'),
        ('addr1', 'uint8_t'), ('addr2', 'uint8_t'), ('addr3', 'uint8_t'), ('addr4', 'uint8_t'),
        ('reserved', 'uint8_t')),
+    _m('LINK_EXCHANGE', 0x50, 'TXRX mode: send the payload that follows, then return the first reply of rx_len '
+       'bytes with a valid CRC within timeout_us; answered with LINK_RESULT.',
+       ('channel_khz', 'uint32_t'), ('bitrate', 'uint32_t'), ('addr_len', 'uint8_t'), ('crc_len', 'uint8_t'),
+       ('atten', 'uint8_t'), ('rx_len', 'uint8_t'), ('addr0', 'uint8_t'), ('addr1', 'uint8_t'), ('addr2', 'uint8_t'),
+       ('addr3', 'uint8_t'), ('addr4', 'uint8_t'), ('reserved', 'uint8_t'), ('reserved2', 'uint16_t'),
+       ('timeout_us', 'uint32_t')),
+    _m('LINK_RESPOND', 0x51, 'TXRX mode: answer up to `count` packets of rx_len bytes with the reply that follows, '
+       'turnaround_us after each one ends, for at most duration_ms; answered with LINK_SUMMARY.',
+       ('channel_khz', 'uint32_t'), ('bitrate', 'uint32_t'), ('addr_len', 'uint8_t'), ('crc_len', 'uint8_t'),
+       ('atten', 'uint8_t'), ('rx_len', 'uint8_t'), ('addr0', 'uint8_t'), ('addr1', 'uint8_t'), ('addr2', 'uint8_t'),
+       ('addr3', 'uint8_t'), ('addr4', 'uint8_t'), ('reserved', 'uint8_t'), ('reserved2', 'uint16_t'),
+       ('turnaround_us', 'uint32_t'), ('duration_ms', 'uint32_t'), ('count', 'uint32_t')),
     _m('GET_GPIO', 0x30, 'Answered with GPIO.'),
     _m('SET_GPIO', 0x31, 'Drive or float a free GPIO.', ('pin', 'uint8_t'), ('state', 'uint8_t')),
 )
@@ -151,6 +163,13 @@ RESPONSES = (
     _m('MEMORY', 0x85, 'Internal heap and ring geometry.', ('heap_free', 'uint32_t'),
        ('heap_min_free', 'uint32_t'), ('banks', 'uint16_t'), ('threshold', 'uint16_t')),
     _m('GPIO', 0x86, 'Followed by (pin u8, state u8) pairs for every free pin.'),
+    _m('LINK_RESULT', 0x87, 'One exchange; followed by the received payload.', ('error', 'uint8_t'),
+       ('len', 'uint8_t'), ('reserved', 'uint16_t'), ('delay_ns', 'uint32_t'), ('crc_failures', 'uint32_t'),
+       ('syncs', 'uint32_t'), ('edge_errors', 'uint32_t')),
+    _m('LINK_SUMMARY', 0x88, 'Responder statistics; followed by the last received payload.', ('error', 'uint8_t'),
+       ('len', 'uint8_t'), ('reserved', 'uint16_t'), ('served', 'uint32_t'), ('delay_min_ns', 'uint32_t'),
+       ('delay_max_ns', 'uint32_t'), ('delay_sum_us', 'uint32_t'), ('crc_failures', 'uint32_t'),
+       ('syncs', 'uint32_t'), ('edge_errors', 'uint32_t')),
     _m('DATA', 0xA0, 'One burst capture; followed by the samples in `format`.',
        ('samples', 'uint32_t'), ('elapsed_us', 'uint32_t'), ('format', 'uint8_t'), ('rate', 'uint8_t'),
        ('reserved', 'uint16_t')),

@@ -191,12 +191,13 @@ class Device:
 
     # ---- mode and transmitter ---------------------------------------------
 
-    def set_mode(self, tx: bool, wait: float = 10.0):
-        """Restart the board in transmit (True) or receive mode and reconnect."""
-        if self.info()['mode'] == int(tx):
+    def set_mode(self, tx: bool | int, wait: float = 10.0):
+        """Restart the board in receive (False / 0), transmit (True / 1) or two-way (2) mode and reconnect."""
+        tx = int(tx)
+        if self.info()['mode'] == tx:
             return
         self.port = _stable_port(self.port)  # the restart may re-enumerate under a new ttyACM number
-        self.request('SET_MODE', mode=int(tx))
+        self.request('SET_MODE', mode=tx)
         self.serial.close()
         deadline = time.monotonic() + wait
         while True:
@@ -204,7 +205,7 @@ class Device:
             try:
                 self.serial = serial.Serial(self.port, self.baud, timeout=self.timeout)
                 self.resync()
-                if self.info()['mode'] == int(tx):
+                if self.info()['mode'] == tx:
                     return
             except (serial.SerialException, OSError, TimeoutError):
                 if time.monotonic() > deadline:
@@ -262,6 +263,49 @@ class Device:
         if wait:
             self.wait_tx(seq, self._tx_timeout(8 * (8 + len(payload)), bitrate, count, gap_us))
         return seq
+
+    # ---- two-way link (mode 2) -------------------------------------------
+
+    @staticmethod
+    def _link_fields(channel_khz: int, addr: bytes, bitrate: int, crc_len: int, rx_len: int, atten: int) -> dict:
+        a = addr + bytes(5 - len(addr))
+        return dict(channel_khz=channel_khz, bitrate=bitrate, addr_len=len(addr), crc_len=crc_len, atten=atten,
+                    rx_len=rx_len, **{f'addr{i}': a[i] for i in range(5)})
+
+    def link_exchange(self, channel_khz: int, addr: bytes, payload: bytes, rx_len: int, bitrate: int = 1_000_000,
+                      crc_len: int = 2, timeout_us: int = 1000, atten: int = 0) -> tuple[bytes | None, dict]:
+        """Send `payload`, return (reply payload or None on timeout, result fields incl. delay_ns)."""
+        seq = self.send('LINK_EXCHANGE', payload, timeout_us=timeout_us,
+                        **self._link_fields(channel_khz, addr, bitrate, crc_len, rx_len, atten))
+        while True:
+            f = self.read_frame()
+            if f.seq != seq:
+                continue
+            if f.message.name == 'ACK':
+                raise DeviceError(f'LINK_EXCHANGE: error {f.fields()["error"]}')
+            v = f.fields()
+            if v['error'] and v['error'] != p.ERRORS['ERR_TIMEOUT']:
+                raise DeviceError(f'LINK_EXCHANGE: error {v["error"]}')
+            return (f.body() if not v['error'] else None), v
+
+    def link_respond(self, channel_khz: int, addr: bytes, reply: bytes, rx_len: int, bitrate: int = 1_000_000,
+                     crc_len: int = 2, turnaround_us: int = 130, duration_ms: int = 5000, count: int = 1000,
+                     atten: int = 0, wait: bool = True):
+        """Answer up to `count` packets for duration_ms; returns the LINK_SUMMARY fields (+ 'last')."""
+        seq = self.send('LINK_RESPOND', reply, turnaround_us=turnaround_us, duration_ms=duration_ms, count=count,
+                        **self._link_fields(channel_khz, addr, bitrate, crc_len, rx_len, atten))
+        return self.wait_link_summary(seq, duration_ms / 1000 + 5) if wait else seq
+
+    def wait_link_summary(self, seq: int, timeout: float) -> dict:
+        while True:
+            f = self.read_frame(timeout)
+            if f.seq != seq:
+                continue
+            if f.message.name == 'ACK':
+                raise DeviceError(f'LINK_RESPOND: error {f.fields()["error"]}')
+            v = f.fields()
+            v['last'] = f.body()
+            return v
 
     # ---- capture and streams ----------------------------------------------
 

@@ -77,6 +77,21 @@ against a reference with `tools/calibrate.py` and apply it with
 `esp_sdr_set_crystal_ppb()`. The serial firmware switches mode with `SET_MODE`
 (the board restarts; `Device.set_mode()` reconnects).
 
+Two-way link (`ESP_SDR_MODE_TXRX`, `esp_sdr_link.h`): send a packet and catch
+the reply, or answer packets with a fixed turnaround, nRF24 ShockBurst framing,
+on-chip real-time receiver:
+
+```c
+ESP_ERROR_CHECK(esp_sdr_init(ESP_SDR_MODE_TXRX));
+esp_sdr_set_gain(true, 40);   /* fixed gain: AGC buries the bits for the on-chip detector */
+esp_sdr_link_t link = {.channel_khz = 2440000, .bitrate = 1000000, .addr = {0xE7, 0xD3, 0xF0, 0x35, 0x77},
+                       .addr_len = 5, .crc_len = 2};
+uint8_t reply[4];
+esp_sdr_link_info_t info;
+esp_sdr_link_exchange(&link, ping, 8, reply, sizeof(reply), 1000, &info);           /* initiator */
+esp_sdr_link_respond(&link, rx, 8, (const uint8_t *)"ACK!", 4, 130, 1000, &info);   /* responder */
+```
+
 C++ users can include `esp_sdr.hpp` (`esp_sdr::Radio`, same calls, no exceptions or heap).
 
 Add `components/esp_sdr` and `components/esp-dsp` to `EXTRA_COMPONENT_DIRS` and
@@ -94,6 +109,7 @@ FreeRTOS, interrupt watchdog off, 240 MHz).
 | Full-band scan | 1842–2790 MHz in 0.9 s (78 kHz bins), 1.6 s (39 kHz) or 4.3 s (15.6 kHz); flat (±0.5 dB in-step), clock spurs removed, mean or peak detector with dwell |
 | I/Q stream | 16 Msps input, decimation 32–1024; gap-free up to the link: 500 kS/s (4-bit), 250 kS/s (8-bit), 125 kS/s (16-bit) |
 | Bandwidth | baseband filter ≈ 13–69 MHz |
+| Two-way link | nRF24 ShockBurst exchange / respond with a 130 µs turnaround (±1 µs); 250k and 1M: 199–200 of 200 replies, 2M: 90–95 % |
 | Transmit | 2210–2780 MHz; carrier, 2-FSK / GFSK (BT 0.5) at 250k / 1M / 2M bit/s, deviation in 39 kHz steps; BLE ADV_NONCONN_IND (received by a stock NimBLE scanner on 37/38/39), nRF24 ShockBurst with CRC 0/1/2 (no ESB); ISM by default |
 
 ## Repository

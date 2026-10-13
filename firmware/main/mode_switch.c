@@ -12,7 +12,7 @@ static RTC_NOINIT_ATTR uint32_t requested;
 
 esp_sdr_mode_t mode_switch_boot_mode(void)
 {
-    bool valid = (requested & 0xFFFF0000u) == MODE_MAGIC && (requested & 0xFFFFu) <= ESP_SDR_MODE_TX;
+    bool valid = (requested & 0xFFFF0000u) == MODE_MAGIC && (requested & 0xFFFFu) <= ESP_SDR_MODE_TXRX;
     return valid ? (esp_sdr_mode_t)(requested & 0xFFFFu) : ESP_SDR_MODE_RX;
 }
 

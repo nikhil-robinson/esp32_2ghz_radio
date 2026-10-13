@@ -26,7 +26,7 @@ Rules:
   request, or until `RELEASE`) is answered with `ERR_BUSY`.
 
 Values: rate: rate_80m = 0, rate_40m = 1, rate_16m = 2; format: format_iq32 = 0, format_iq10 = 1, format_iq8 = 2; workers: workers_single = 0, workers_dual_assist = 1, workers_dual = 2;
-GPIO state: gpio_float = 0, gpio_low = 1, gpio_high = 2; mode: mode_rx = 0, mode_tx = 1; region: region_ism = 0, region_ham = 1, region_unrestricted = 2.
+GPIO state: gpio_float = 0, gpio_low = 1, gpio_high = 2; mode: mode_rx = 0, mode_tx = 1, mode_txrx = 2; region: region_ism = 0, region_ham = 1, region_unrestricted = 2.
 
 Errors: err_none = 0, err_unknown_command = 1, err_bad_length = 2, err_bad_argument = 3, err_busy = 4, err_timeout = 5, err_unsupported = 6, err_no_memory = 7, err_hardware = 8, err_wrong_mode = 9.
 
@@ -39,7 +39,7 @@ Run status: run_ok = 0, run_fail_arg = 1, run_fail_late = 2, run_fail_age = 3, r
 | `GET_INFO` | `0x01` | - | Firmware identity and limits; answered with INFO. |
 | `RELEASE` | `0x02` | - | Give up the port lease now. |
 | `SET_BAUD` | `0x03` | `baud` uint32 | UART only: ACK at the old rate, then switch. |
-| `SET_MODE` | `0x04` | `mode` uint8 | ACK, then restart in receive (0) or transmit (1) mode; the host reconnects. |
+| `SET_MODE` | `0x04` | `mode` uint8 | ACK, then restart in receive (0), transmit (1) or two-way (2) mode; the host reconnects. |
 | `SET_FREQUENCY` | `0x10` | `mhz` uint16 | Tune the receive LO. |
 | `SET_PLL_OFFSET` | `0x11` | `khz` int32 | Fine LO offset applied from the next tune. |
 | `SET_CRYSTAL_PPB` | `0x1B` | `ppb` int32 | Board crystal error to cancel in RX and TX tuning, ppb (+ = runs fast); applies from the next tune. |
@@ -65,6 +65,8 @@ Run status: run_ok = 0, run_fail_arg = 1, run_fail_late = 2, run_fail_age = 3, r
 | `TX_BITS` | `0x43` | `center_khz` uint32, `bitrate` uint32, `deviation_hz` uint32, `gap_us` uint32, `count` uint16, `nbits` uint16, `gaussian` uint8, `atten` uint8 | Send nbits packed bits (first = bit 7 of byte 0, 1 = +deviation) count times; followed by the bits. ACK when done (ERR_TIMEOUT: CPU fell behind the bit clock). |
 | `TX_BLE` | `0x44` | `gap_us` uint32, `count` uint16, `channel` uint8, `atten` uint8, `adv0` uint8, `adv1` uint8, `adv2` uint8, `adv3` uint8, `adv4` uint8, `adv5` uint8 | BLE ADV_NONCONN_IND, channel 37..39, AdvA adv0..adv5 LSB first; followed by AdvData (<= 31 bytes). ACK when done. |
 | `TX_NRF24` | `0x45` | `bitrate` uint32, `gap_us` uint32, `count` uint16, `channel` uint8, `atten` uint8, `addr_len` uint8, `crc_len` uint8, `addr0` uint8, `addr1` uint8, `addr2` uint8, `addr3` uint8, `addr4` uint8 | nRF24 ShockBurst (no ESB), address addr0.. in air order; followed by the payload (<= 32 bytes). ACK when done. |
+| `LINK_EXCHANGE` | `0x50` | `channel_khz` uint32, `bitrate` uint32, `addr_len` uint8, `crc_len` uint8, `atten` uint8, `rx_len` uint8, `addr0` uint8, `addr1` uint8, `addr2` uint8, `addr3` uint8, `addr4` uint8, `timeout_us` uint32 | TXRX mode: send the payload that follows, then return the first reply of rx_len bytes with a valid CRC within timeout_us; answered with LINK_RESULT. |
+| `LINK_RESPOND` | `0x51` | `channel_khz` uint32, `bitrate` uint32, `addr_len` uint8, `crc_len` uint8, `atten` uint8, `rx_len` uint8, `addr0` uint8, `addr1` uint8, `addr2` uint8, `addr3` uint8, `addr4` uint8, `turnaround_us` uint32, `duration_ms` uint32, `count` uint32 | TXRX mode: answer up to `count` packets of rx_len bytes with the reply that follows, turnaround_us after each one ends, for at most duration_ms; answered with LINK_SUMMARY. |
 | `GET_GPIO` | `0x30` | - | Answered with GPIO. |
 | `SET_GPIO` | `0x31` | `pin` uint8, `state` uint8 | Drive or float a free GPIO. |
 
@@ -79,6 +81,8 @@ Run status: run_ok = 0, run_fail_arg = 1, run_fail_late = 2, run_fail_age = 3, r
 | `WORKERS` | `0x84` | `mode` uint8, `core1_alive` uint8, `assist_blocks` uint32 | Second-core state. |
 | `MEMORY` | `0x85` | `heap_free` uint32, `heap_min_free` uint32, `banks` uint16, `threshold` uint16 | Internal heap and ring geometry. |
 | `GPIO` | `0x86` | - | Followed by (pin u8, state u8) pairs for every free pin. |
+| `LINK_RESULT` | `0x87` | `error` uint8, `len` uint8, `delay_ns` uint32, `crc_failures` uint32, `syncs` uint32, `edge_errors` uint32 | One exchange; followed by the received payload. |
+| `LINK_SUMMARY` | `0x88` | `error` uint8, `len` uint8, `served` uint32, `delay_min_ns` uint32, `delay_max_ns` uint32, `delay_sum_us` uint32, `crc_failures` uint32, `syncs` uint32, `edge_errors` uint32 | Responder statistics; followed by the last received payload. |
 | `DATA` | `0xA0` | `samples` uint32, `elapsed_us` uint32, `format` uint8, `rate` uint8 | One burst capture; followed by the samples in `format`. |
 | `RING_DATA` | `0xA1` | `rate_hz` uint32, `units` uint32, `count0` uint32, `count1` uint32, `count2` uint32 | Units of a ring capture; followed by raw IQ32 words, back to back. |
 | `SCAN_SEGMENT` | `0xA6` | `sweep` uint32, `step` uint16, `steps` uint16, `lo_mhz` uint16, `bins` uint16, `start_hz` uint32, `bin_millihz` uint32, `gain` uint8, `ffts` uint8, `db_step` uint8, `spurs` uint8, `elapsed_us` uint32 | One scan step; followed by `bins` 0.5 dB codes, ascending frequency. |
