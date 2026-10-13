@@ -13,7 +13,10 @@
 #include "phy_private.h"
 #include "soc/soc.h"
 
-#define RX_SETTLE_US 3000u      /* analog settling after entering receive */
+/* Settling after entering receive. 3 ms was inherited; 0..1000 us gave the
+ * same captures (level, SNR, DC, AGC) after hops, 260 MHz jumps and 6/5-band
+ * switches (measured 2026-10-13). 100 us keeps a margin. */
+#define RX_SETTLE_US 100u
 #define DEFAULT_MHZ 2412u
 #define DEFAULT_GAIN_INDEX 40u
 
